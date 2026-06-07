@@ -51,3 +51,10 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# AI assistant / session state (per-developer, not for publishing)
+.claude/sessions/
+.claude/cache/
+.claude/settings.local.json
+.aider*
+.cursor/
