@@ -1,6 +1,9 @@
+> [!WARNING]
+> The following is a prototype, reference implementation, and proof-of-concept. This open source code is provided for research, experimentation, and developer education only. This code has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. Use at your own risk.
+
 # Feedback Board
 
-> **Experimental Proof-of-Concept.** This is experimental code developed and published by Parity to explore decentralized application patterns on Polkadot. It is not a Parity product or service. It is provided as-is, with no guarantees of maintenance, support, network uptime, or fitness for any purpose. Anyone who forks or deploys this code does so at their own discretion and operates their own deployment independently.
+This is experimental code developed and published by Parity to explore decentralized application patterns on Polkadot. It is not a Parity product or service. It is provided as-is, with no guarantees of maintenance, support, network uptime, or fitness for any purpose. Anyone who forks or deploys this code does so at their own discretion and operates their own deployment independently.
 
 A decentralized sticky-note board on Polkadot. Pin your feedback, notes, or thoughts to a shared board — everyone using a remix of this app sees the same notes, because they all read from the same on-chain contract.
 
@@ -13,14 +16,6 @@ A decentralized sticky-note board on Polkadot. Pin your feedback, notes, or thou
 
 Because every remix uses the same `@example/feedback` contract, the board is shared across all forks.
 
-## Stack — Paseo Next v2
-
-- **Smart contract** — PVM (PolkaVM) on Paseo Asset Hub Next, managed via [CDM](https://github.com/paritytech/contract-dependency-manager)
-- **Bulletin Chain** — host-mediated preimage submission via `@novasamatech/product-sdk` (`preimageManager`)
-- **Account management** — `@novasamatech/product-sdk` `createAccountsProvider()` with the `"createTransaction"` signer path (preserves Paseo Next's `AsPgas` / `AsRingAlias` signed extensions). Requires Polkadot Desktop ≥ 0.3.10.
-- **Contracts** — `@parity/product-sdk-contracts` `ContractManager` with lazy chain follow + `ensureContractAccountMapped` for Revive mapping.
-- **Frontend** — React + Vite
-
 ## Setup
 
 ```bash
@@ -28,32 +23,10 @@ npm install
 npm run dev
 ```
 
-Open the app in Polkadot Desktop or Polkadot Mobile. Localhost dev mode uses a direct WS provider to Paseo Asset Hub Next.
+Open the app in Polkadot Desktop.
 
 > Deploying **your own copy** (own contract, own `.dot` name, published to the
 > playground)? Follow the step-by-step [DEPLOYMENT.md](./DEPLOYMENT.md).
-
-### Deploy contract (first time only)
-
-```bash
-cdm build
-npm run deploy
-cdm install @example/feedback -n paseo
-```
-
-`npm run deploy` targets Paseo Next v2 endpoints explicitly:
-
-- Asset Hub: `wss://paseo-asset-hub-next-rpc.polkadot.io`
-- Bulletin:  `wss://paseo-bulletin-next-rpc.polkadot.io`
-
-`cdm install` updates [cdm.json](./cdm.json) with the deployed address. The repo ships with a placeholder address (`0x0…0`); after the first deploy, commit the updated `cdm.json` so remixes pick up the shared contract.
-
-### Build & deploy frontend
-
-```bash
-npm run build:frontend
-npx bulletin-deploy --env paseo-next-v2 ./dist <your-domain>.dot
-```
 
 ## Remixing
 
