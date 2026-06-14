@@ -99,9 +99,28 @@ npm run deploy:frontend:summit
   live-resolves its address.
 - **`--moddable`** records the repo's `git origin` as the public source so attendees
   can `playground mod feedback.dot`.
-- The publish leg writes to `@polkadot/playground-registry` (`0x14C27954…`); 5Fk8 is
-  the registry sudo, so it may publish. Use the **fix SHA** — earlier playground-cli
-  commits publish the entry to Paseo instead of Summit.
+- Pin the playground-cli to the **env-aware-publish fix SHA** — earlier commits route
+  the `--playground` publish to Paseo, not Summit.
+
+### Apps-grid listing (the curation reality)
+
+CI splits the deploy for resilience: the **name bind (`--no-playground`) MUST pass**,
+but the **`--playground` Apps-grid publish is best-effort (`continue-on-error`)**. On
+Summit the playground registry's `publish` is **authorization-gated and reverts
+`Unauthorized`** for the deploy signer (the playground-cli hdkd-signer is not the
+registry sudo — the keyring-vs-hdkd derivation gap), so it may stay red. That does NOT
+take the app down — `feedback.dot` is live regardless.
+
+The canonical way feedback.dot lands in the **Apps grid** is a **playground admin
+pinning it** via `pin-apps.ts` in `playground-app-community` (the curation model used
+for every sample app), e.g.:
+
+```sh
+# in playground-app-community, run by a registry admin:
+ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
+  MNEMONIC="<registry sudo/admin mnemonic>" \
+  pnpm tsx scripts/pin-apps.ts feedback.dot
+```
 
 ## Verify
 
