@@ -1,5 +1,9 @@
 # Deploying your own copy of this app
 
+> This is the **remix** guide — deploy your *own* copy via the Polkadot
+> Playground. Operating the canonical PCF instance on the **Summit network**?
+> See [DEPLOY_SUMMIT.md](./DEPLOY_SUMMIT.md) instead.
+
 This guide walks you through deploying your own instance of a playground
 sample app: your own smart contract on Polkadot Hub, your own frontend on
 Bulletin Chain, your own `.dot` name, starting from nothing but a GitHub
@@ -112,7 +116,7 @@ Re-check balances any time with `cdm account bal -n paseo`.
 
 Contract package names work like npm package names, except they are
 **globally owned in the on-chain registry: first deploy wins, forever**.
-The name this repo ships with (`@example/feedback`) belongs to the original
+The name this repo ships with (`@polkadot/feedback`) belongs to the original
 deployment, so publishing under it from your account will fail. Claim your
 own:
 
@@ -120,7 +124,7 @@ Edit `contracts/feedback/Cargo.toml`:
 
 ```toml
 [package.metadata.cdm]
-package = "@<your-handle>/feedback"   # was: @example/feedback
+package = "@<your-handle>/feedback"   # was: @polkadot/feedback
 ```
 
 Then update every other reference to the old name. For this app that's:
@@ -132,7 +136,7 @@ Then update every other reference to the old name. For this app that's:
 Find them all with:
 
 ```sh
-grep -rn "@example/feedback" --include="*.ts" --include="*.toml" --include="*.json" . | grep -v node_modules
+grep -rn "@polkadot/feedback" --include="*.ts" --include="*.toml" --include="*.json" . | grep -v node_modules
 ```
 
 > Note for Feedback Board specifically: the upstream app's party trick is

@@ -14,7 +14,7 @@ A decentralized sticky-note board on Polkadot. Pin your feedback, notes, or thou
 - To render the board, the app reads all CIDs from the contract, fetches each note's JSON from a Bulletin IPFS gateway, and pins them up as sticky notes.
 - Color and tilt of each note are derived deterministically from its CID — everyone sees the same board, but it still looks playfully random.
 
-Because every remix uses the same `@example/feedback` contract, the board is shared across all forks.
+Because every remix uses the same `@polkadot/feedback` contract, the board is shared across all forks.
 
 ## Setup
 
@@ -27,6 +27,10 @@ Open the app in Polkadot Desktop.
 
 > Deploying **your own copy** (own contract, own `.dot` name, published to the
 > playground)? Follow the step-by-step [DEPLOYMENT.md](./DEPLOYMENT.md).
+>
+> Operating the **canonical PCF instance on the Summit network** (the
+> `@polkadot/feedback` contract + `feedback.dot`, with CI auto-deploy)? See
+> [DEPLOY_SUMMIT.md](./DEPLOY_SUMMIT.md).
 
 ## Remixing
 

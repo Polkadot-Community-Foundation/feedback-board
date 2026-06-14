@@ -14,7 +14,7 @@ import {
     createContractRuntimeFromClient,
     ensureContractAccountMapped,
 } from "@parity/product-sdk-contracts";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
+import { summit_asset_hub } from "@parity/product-sdk-descriptors/summit-asset-hub";
 import { ss58ToH160 } from "@parity/product-sdk-address";
 import { createClient, AccountId, type PolkadotSigner } from "polkadot-api";
 import { getWsProvider } from "@polkadot-api/ws-provider";
@@ -23,17 +23,18 @@ import { CID } from "multiformats/cid";
 import * as raw from "multiformats/codecs/raw";
 import type { MultihashDigest } from "multiformats/hashes/interface";
 
-// Paseo Asset Hub Next (v2) — chain reset 2026-06-02.
-const PASEO_ASSET_HUB_GENESIS =
-    "0xbf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f" as const;
-const PASEO_ASSET_HUB_WS = "wss://paseo-asset-hub-next-rpc.polkadot.io";
+// Summit Asset Hub (PolkaVM / pallet-revive). Genesis + RPC from the Summit
+// deployments register.
+const SUMMIT_ASSET_HUB_GENESIS =
+    "0xf388dc6d6cdf6fb77eac3c4a91f31bc0c8642b142f1a757512ab7849f9f70660" as const;
+const SUMMIT_ASSET_HUB_WS = "wss://summit-asset-hub-rpc.polkadot.io";
 
 // ---------------------------------------------------------------------------
 // Permissions + resource allowances.
 //
 // `requestPermission` covers ChainSubmit / PreimageSubmit / StatementSubmit;
 // `requestResourceAllocation` covers on-chain quotas (SmartContractAllowance,
-// BulletinAllowance, AutoSigning). Paseo Next v2 requires BOTH before any
+// BulletinAllowance, AutoSigning). Summit requires BOTH before any
 // Revive.call or preimage submit.
 // ---------------------------------------------------------------------------
 
@@ -91,7 +92,7 @@ async function doClaim(): Promise<void> {
 // We deliberately use @novasamatech/host-api-wrapper rather than the frozen
 // @novasamatech/product-sdk. Only host-api-wrapper accepts the
 // `"createTransaction"` signerType, which routes via host_create_transaction
-// and preserves Paseo Next v2's signed extensions (AsPgas, AsRingAlias,
+// and preserves Summit's signed extensions (AsPgas, AsRingAlias,
 // EthSetOrigin, AuthorizeCall) — without it every signed tx fails BadProof.
 // ---------------------------------------------------------------------------
 
@@ -107,7 +108,7 @@ function getProductIdentifier(): string | null {
 }
 
 export function getAppAccountId(): [string, number] {
-    const identifier = getProductIdentifier() ?? "feedback-board.dot";
+    const identifier = getProductIdentifier() ?? "feedback.dot";
     return [identifier, 0];
 }
 
@@ -334,8 +335,8 @@ async function ensureContractsReady(): Promise<void> {
         const isDevHost =
             typeof window !== "undefined" && /^localhost(:\d+)?$/.test(window.location.host);
         const provider = isDevHost
-            ? getWsProvider(PASEO_ASSET_HUB_WS)
-            : createPapiProvider(PASEO_ASSET_HUB_GENESIS, getWsProvider(PASEO_ASSET_HUB_WS));
+            ? getWsProvider(SUMMIT_ASSET_HUB_WS)
+            : createPapiProvider(SUMMIT_ASSET_HUB_GENESIS, getWsProvider(SUMMIT_ASSET_HUB_WS));
         _polkadotClient = createClient(provider);
 
         await _polkadotClient.getChainSpecData();
@@ -348,21 +349,21 @@ async function ensureContractsReady(): Promise<void> {
         // Map account BEFORE fromLiveClient. `fromLiveClient` immediately calls
         // `registry.getAddress(...)` as a view, and pallet-revive dry-run-fails
         // that with `Revive::AccountUnmapped` if the query origin isn't mapped.
-        const initRuntime = createContractRuntimeFromClient(_polkadotClient, paseo_asset_hub);
+        const initRuntime = createContractRuntimeFromClient(_polkadotClient, summit_asset_hub);
         await mapAccountWithRuntime(initRuntime, _state.account);
 
         _contractManager = await ContractManager.fromLiveClient(
             _cdmJson,
             _polkadotClient,
-            paseo_asset_hub,
+            summit_asset_hub,
             {
                 defaultOrigin: _state.account.address as never,
                 defaultSigner: _state.account.signer,
                 registryOrigin: _state.account.address as never,
-                libraries: ["@example/feedback"],
+                libraries: ["@polkadot/feedback"],
             },
         );
-        _contract = wrapContract(_contractManager.getContract("@example/feedback"));
+        _contract = wrapContract(_contractManager.getContract("@polkadot/feedback"));
         console.log("[CDM] contract ready (live registry resolution)");
     })();
     return _contractInitPromise;
@@ -391,7 +392,7 @@ export function getContract(): any {
 // ---------------------------------------------------------------------------
 // Revive account mapping.
 //
-// pallet-revive on Paseo Next v2 requires every SS58 origin that calls a
+// pallet-revive on Summit requires every SS58 origin that calls a
 // contract to have a `Revive.map_account()` entry. `ensureContractAccountMapped`
 // is idempotent — the first call costs one signature, subsequent calls
 // short-circuit.
@@ -446,7 +447,7 @@ export function asAddress(hexOrAccount: string | AppAccount): `0x${string}` {
 // ---------------------------------------------------------------------------
 
 const GATEWAYS = [
-    "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs/",
+    "https://summit-ipfs.polkadot.io/ipfs/",
     "https://dweb.link/ipfs/",
     "https://ipfs.io/ipfs/",
     "https://nftstorage.link/ipfs/",

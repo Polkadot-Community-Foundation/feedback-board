@@ -1,12 +1,12 @@
 {
   "targets": {},
   "dependencies": {
-    "@example/feedback": "latest"
+    "@polkadot/feedback": "latest"
   },
   "contracts": {
-    "@example/feedback": {
-      "version": 2,
-      "address": "0x9cc28C63C73Ff5841dD5792C184c4d633Cd3b055",
+    "@polkadot/feedback": {
+      "version": 1,
+      "address": "0x0000000000000000000000000000000000000000",
       "abi": [
         {
           "inputs": [],
@@ -127,8 +127,8 @@
           "type": "error"
         }
       ],
-      "metadataCid": "bafk2bzaced4czg6psqd47zatizct3j76kpz5z3ylqnu33z72zbxufgfh6rch6"
+      "metadataCid": ""
     }
   },
-  "registry": "0xf62c2ece29cd8df2e10040ecfa5a894a5c5d9cb0"
+  "registry": "0xa5747e60ae27f93e92019e4021abfc4957050141"
 }

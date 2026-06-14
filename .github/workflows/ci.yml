@@ -1,0 +1,34 @@
+name: CI
+
+# PR validation: typecheck + frontend build. No chain access, no secrets, no
+# deploy. The Summit deploy lives in deploy-summit.yml (push to main only).
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      # `build:frontend` is `tsc -b && vite build` — the tsc step is the typecheck.
+      - name: Typecheck & build
+        run: npm run build:frontend
