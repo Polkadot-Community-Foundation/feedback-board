@@ -33,7 +33,15 @@ redeploy of either leg is independent.
 - **`SUMMIT_DEPLOYER_KEY`** repo secret = the 5Fk8 mnemonic. Used by CI for Leg B.
 - 5Fk8 funded with SUM, **Revive-mapped**, and **Bulletin-authorized** (allowance
   expires ~14 days; refresh via the authorizer — see the OPS bulletin-renewal
-  runbook). `feedback` (8 chars) is **not** PoP-gated.
+  runbook).
+- **`feedback.dot` pre-registered to 5Fk8.** `feedback` is **8 chars** → DotNS
+  `PopRules` gates 6–8 char labels behind **PoP-Full**, which isn't effective on
+  Summit (5Fk8 reads `NoStatus`). So the SPA deploy can **not** self-register it —
+  it must be registered ahead of time via the **`registerReserved` owner-override**
+  (signed by the DotNS owner key `0x8c78b53f…`, name granted to 5Fk8), exactly like
+  `browse.dot`/`t3rminal.dot`. After that, the deploy sees `already-owned-by-us` and
+  only sets the contenthash. (≥9-char labels are not gated; an alternative is to use
+  `feedback-board.dot`.)
 - CDM toolchain on the VM (`cdm --version`) that knows the `w3s` preset
   (`@polkadot-community-foundation/cdm-cli`). If `cdm deploy -n w3s` errors
   `Unknown chain "w3s"`, the CLI predates the preset.
