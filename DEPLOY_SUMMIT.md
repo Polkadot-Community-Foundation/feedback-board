@@ -93,12 +93,26 @@ Feedback Board is a playground sample app, so it should appear in the playground
 reverts `Unauthorized` — the deploy signer is not the registry sudo). A **registry
 admin** (the `@polkadot/playground-registry` sudo) lists it, signing as the sudo:
 
-- via the PCF **`playground-cli`** (the env-aware-publish fix, pinned ≥ `b41fecc`):
-  `playground deploy --env summit --signer dev --suri "<registry-sudo mnemonic>"
-  --domain feedback --buildDir dist --no-build --no-contracts --playground --moddable
-  --tag social`, **or**
-- via `playground-app-community`'s curation scripts (`pin-apps.ts feedback.dot`) once
-  the entry exists.
+**⚠️ Not the playground-cli `--suri` path** — that signs as a *product-derived*
+account (`mnemonic + "/product/…"`), which is NOT the registry sudo, so it reverts
+`Unauthorized`. The listing must be signed by the **bare keyring 5Fk8** (the sudo).
+
+This repo ships a self-contained script that does exactly that (no `playground`
+binary needed — just `npm install` + the key):
+
+```sh
+npm install                                            # pulls tsx + the publish deps
+MNEMONIC="<bare 5Fk8 mnemonic>" npm run publish:playground         # DRY RUN — prints args
+#   confirm "Signer: 5Fk8FBTqBp…" (must be the registry sudo), then:
+MNEMONIC="<bare 5Fk8 mnemonic>" RUN=1 npm run publish:playground   # upload metadata + publish
+```
+
+It signs with `seedToAccount(mnemonic, "")` (bare 5Fk8), uploads a feedback-specific
+AppMetadata (name/icon/repo/tag `social`) to Summit Bulletin, and calls
+`registry.publish(feedback.dot, …, is_moddable=true)` on `@polkadot/playground-registry`
+(`0x14C27954…`) — the same call `playground-app-community`'s `publish-metadata.ts`
+makes for `playground.dot`. Afterwards an admin can optionally feature it with
+`pin-apps.ts feedback.dot`.
 
 `feedback.dot` is already live and `--moddable` will record this repo's `git origin`
 as the public source, so `playground mod feedback.dot` works after the listing.
