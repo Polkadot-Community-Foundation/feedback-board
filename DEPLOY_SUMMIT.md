@@ -9,7 +9,14 @@ The repo on `main` is already retargeted to Summit. "Deploy" is **two legs**:
 | Leg | What | Where | How | When |
 |---|---|---|---|---|
 | **A — contract** | `@polkadot/feedback` (Rust → PolkaVM) | Summit Asset Hub, registered in the CDM `ContractRegistry` | `cdm deploy -n w3s` — **manual, on the operator VM** | one-time (greenfield) |
-| **B — frontend** | the Vite SPA | Summit Bulletin Chain, bound to `feedback.dot` | `polkadot-app-deploy --env summit` — **CI on push to `main`** | every frontend change |
+| **B — frontend + Apps grid** | the Vite SPA | Summit Bulletin (bound to `feedback.dot`) **+ the playground registry** (`@polkadot/playground-registry` `0x14C27954…`, moddable) | the PCF **`playground-cli`** fork — `playground deploy --env summit --playground --moddable` — **CI on push to `main`** | every frontend change |
+
+Feedback Board is a **playground sample app**, so Leg B uses the **playground-cli**
+(not `polkadot-app-deploy`): it is the only tool that hosts + binds the name **and**
+writes the moddable Apps-grid entry into the playground registry, so the app shows
+in the Apps grid and can be `playground mod feedback.dot`'d. The Summit publish leg
+requires the **env-aware-publish fix** (PCF playground-cli #2) — the CI pins that
+SHA; earlier commits published the registry entry to Paseo, not Summit.
 
 The SPA resolves the contract address from the **on-chain CDM registry at boot**
 (`ContractManager.fromLiveClient`, `libraries: ["@polkadot/feedback"]`), so once
@@ -69,23 +76,51 @@ Notes:
 - Committing `cdm.json` to `main` triggers the CI frontend deploy (Leg B) with
   the real address baked in (belt-and-suspenders; the SPA also live-resolves it).
 
-## Leg B — deploy the frontend (CI, automatic)
+## Leg B — deploy the frontend + Apps-grid entry (CI)
 
-Merging to `main` runs `.github/workflows/deploy-summit.yml`:
-build → assert the bundle is Paseo-free → `polkadot-app-deploy --env summit
---direct-signer` to `feedback.dot`, signed by `SUMMIT_DEPLOYER_KEY`.
+`.github/workflows/deploy-summit.yml` builds the playground-cli fork from source
+(pinned to the env-aware-publish fix SHA) and runs, signed by `SUMMIT_DEPLOYER_KEY`:
+build SPA → assert Paseo-free → host on Bulletin + bind `feedback.dot` + publish
+the moddable entry into the playground registry. **Run the first (greenfield)
+publish via `workflow_dispatch`** so it can be watched; day-2 changes redeploy on
+push to `main`.
 
-Manual equivalent on the VM:
+Manual equivalent on the VM (needs the PCF `playground` fork on PATH):
 
 ```sh
 npm run build:frontend
 export MNEMONIC="<5Fk8 mnemonic>"
-npm run deploy:frontend:summit        # polkadot-app-deploy --env summit --mnemonic ./dist feedback.dot
+npm run deploy:frontend:summit
+# = playground deploy --env summit --no-build --buildDir dist --domain feedback
+#     --signer dev --suri "$MNEMONIC" --no-contracts --playground --moddable --tag social
 ```
 
-- **`--mnemonic` (direct signer), never `--suri`** — `--suri` falls back to the
-  unauthorized public pool and the Bulletin upload fails on Summit.
-- **Never `--publish`** — Summit has no Publisher.
+- **`--no-contracts`** — the contract is deployed separately (Leg A); the SPA
+  live-resolves its address.
+- **`--moddable`** records the repo's `git origin` as the public source so attendees
+  can `playground mod feedback.dot`.
+- Pin the playground-cli to the **env-aware-publish fix SHA** — earlier commits route
+  the `--playground` publish to Paseo, not Summit.
+
+### Apps-grid listing (the curation reality)
+
+CI splits the deploy for resilience: the **name bind (`--no-playground`) MUST pass**,
+but the **`--playground` Apps-grid publish is best-effort (`continue-on-error`)**. On
+Summit the playground registry's `publish` is **authorization-gated and reverts
+`Unauthorized`** for the deploy signer (the playground-cli hdkd-signer is not the
+registry sudo — the keyring-vs-hdkd derivation gap), so it may stay red. That does NOT
+take the app down — `feedback.dot` is live regardless.
+
+The canonical way feedback.dot lands in the **Apps grid** is a **playground admin
+pinning it** via `pin-apps.ts` in `playground-app-community` (the curation model used
+for every sample app), e.g.:
+
+```sh
+# in playground-app-community, run by a registry admin:
+ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
+  MNEMONIC="<registry sudo/admin mnemonic>" \
+  pnpm tsx scripts/pin-apps.ts feedback.dot
+```
 
 ## Verify
 

@@ -6,7 +6,7 @@
   "contracts": {
     "@polkadot/feedback": {
       "version": 1,
-      "address": "0x0000000000000000000000000000000000000000",
+      "address": "0x86Cc121993A2B7Aa53EC8222B63D2053eF352f32",
       "abi": [
         {
           "inputs": [],
@@ -127,7 +127,7 @@
           "type": "error"
         }
       ],
-      "metadataCid": ""
+      "metadataCid": "bafk2bzacea6dsyaa7epjo27hvipt7waumihd53geczm6qlvtirqmnhapg2xxw"
     }
   },
   "registry": "0xa5747e60ae27f93e92019e4021abfc4957050141"
