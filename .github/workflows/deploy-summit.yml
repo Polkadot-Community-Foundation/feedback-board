@@ -1,105 +1,65 @@
-name: Deploy to Summit (feedback.dot)
+name: Deploy to Summit
 
-# Deploy the Feedback Board frontend to the Web3 Summit network, bound to
-# `feedback.dot`, and (best-effort) list it in the playground Apps grid so it's
-# moddable (`playground mod feedback.dot`).
+# Production deploy of the Feedback Board frontend to Summit (Bulletin Chain + DotNS).
 #
-# This is the FRONTEND leg. The CONTRACT leg (`@polkadot/feedback` via
-# `cdm deploy -n w3s`) is a separate manual/VM step that must run FIRST so the
-# board resolves on Summit — see DEPLOY_SUMMIT.md.
+# Summit-only, production-only by design: on Summit every preview domain would be
+# a fresh DotNS registration (~SUM gas + Bulletin storage that expires in ~14 days
+# + a proof-of-personhood gate on short labels), so there are NO per-PR preview
+# deploys. PR validation lives in ci.yml (typecheck + build). This job runs on
+# push to main and on manual dispatch, and always targets the single production
+# domain `feedback.dot`.
 #
-# Deploy vehicle = `playground deploy` (playground-cli) — the only tool that does
-# host + bind + registry-publish + moddable, and runs headless when
-# --signer/--domain/--buildDir/--playground/--contracts are all specified. It is a
-# PRIVATE PCF package whose Summit wiring (@w3s CDM meta-registry via
-# @polkadot-community-foundation/cdm-env) isn't in the public paritytech binaries,
-# so CI builds the PCF fork from source at a pinned SHA.
+# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.10.1 — it ships
+# the built-in `summit` env (RPCs + DotNS addresses + summit-ipfs gateway) and the
+# manifest direct-signer fix. Installed + run inline (NOT the @parity-scoped
+# reusable workflow, which pins a @parity/polkadot-app-deploy version that is not
+# published). Flags mirror the proven w3s-payment-processor / browse path:
+# --mnemonic (direct signer, never --suri), --config, --js-merkle, no --publish
+# (Summit has no Publisher).
 #
-# ⚠️ The deploy is SPLIT for resilience: the name bind MUST pass, but the
-# `--playground` Apps-grid publish is a SEPARATE best-effort step — on Summit the
-# registry's `publish` is authorization-gated and reverts `Unauthorized` for the
-# deploy signer (CLI hdkd-signer ≠ registry sudo). If it stays red, a playground
-# admin pins the app instead (curation model — see DEPLOY_SUMMIT.md).
-
+# The contract leg (`@polkadot/feedback` via `cdm deploy -n w3s`) is a one-time,
+# greenfield, manually-signed step on the operator VM — see DEPLOY_SUMMIT.md. CI
+# only ships the SPA; the SPA live-resolves the contract address from the on-chain
+# CDM registry at boot, so a frontend redeploy needs no new contract.
 on:
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: "Attempt the playground-registry publish (moddable). Off = host + bind name only."
-        type: boolean
-        default: true
   push:
     branches: [main]
-    # Day-2 redeploys only when app content changes; run the greenfield first
-    # deploy via workflow_dispatch so it can be watched.
     paths:
-      - "src/**"
-      - "index.html"
-      - "cdm.json"
-      - "package.json"
-      - "vite.config.ts"
-      - "tsconfig*.json"
-      - ".github/workflows/deploy-summit.yml"
+      - 'src/**'
+      - 'index.html'
+      - 'cdm.json'
+      - 'package.json'
+      - 'tsconfig.json'
+      - 'vite.config.ts'
+      - 'assets/**'
+      - 'polkadot-app-deploy.config.ts'
+      - '.github/workflows/deploy-summit.yml'
+  workflow_dispatch:
 
 concurrency:
-  # One signer (5Fk8) signs serially on-chain — never run two deploys at once.
-  group: deploy-summit-feedback
-  cancel-in-progress: false
+  group: deploy-summit-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-env:
-  # playground-cli (PCF fork) carries `--env summit` + resolves the @w3s CDM
-  # meta-registry (0xa5747e60…0141) via @polkadot-community-foundation/cdm-env.
-  # Pinned to the env-aware-publish fix (PCF playground-cli #2, now fork main):
-  # earlier commits routed the --playground publish to Paseo, not Summit. Bump REF
-  # as the fork advances; the hard requirement is cdm-env >= 2.1.0 (w3s populated).
-  PLAYGROUND_CLI_REPO: Polkadot-Community-Foundation/playground-cli
-  PLAYGROUND_CLI_REF: 9bc441548c6915fe612d031b83684797f3e6c2a0
-  # Registry card filter tag (social|chat|defi|utility|gaming|marketplace|irl).
-  # A shared feedback board = social.
-  PLAYGROUND_TAG: social
-
 jobs:
   deploy:
+    name: Build & deploy to Summit
     runs-on: ubuntu-latest
-    timeout-minutes: 25
     steps:
-      - name: Checkout feedback-board
-        uses: actions/checkout@v4
-        # `--moddable` records `git remote get-url origin` as the public source repo.
+      - uses: actions/checkout@v4
 
-      - name: Guard — deployer mnemonic must be set
-        env:
-          MNEMONIC: ${{ secrets.SUMMIT_DEPLOYER_KEY }}
-        run: |
-          if [ -z "$MNEMONIC" ]; then
-            echo "::error::secrets.SUMMIT_DEPLOYER_KEY is not set. Add the 5Fk8 deployer mnemonic (see DEPLOY_SUMMIT.md)."
-            exit 1
-          fi
-
-      - name: Setup Node 22
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
 
-      - name: Setup pnpm (to build playground-cli)
-        uses: pnpm/action-setup@v4
-        with:
-          version: "11.5.2"
+      - name: Install dependencies
+        run: npm install
 
-      - name: Setup Bun (playground-cli compile + runtime)
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      # ── App leg: build the SPA (npm — the repo gitignores the lockfile) ──────
-      - name: Install app deps
-        run: npm install --no-audit --no-fund
-
-      - name: Build SPA
-        run: npm run build:frontend # tsc -b && vite build -> ./dist (relative base, IPFS-ready)
+      - name: Build frontend
+        run: npm run build:frontend
 
       - name: Assert the bundle is Summit-only (no Paseo strings baked in)
         run: |
@@ -109,74 +69,30 @@ jobs:
           fi
           echo "OK: no Paseo strings in dist"
 
-      # ── Tooling leg: build the Summit-capable playground CLI from the fork ───
-      - name: Checkout playground-cli (PCF fork, pinned)
-        uses: actions/checkout@v4
+      - name: Install deploy tool
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.10.1
+
+      - name: Deploy to Summit Bulletin + bind feedback.dot
+        uses: nick-fields/retry@v3
         with:
-          repository: ${{ env.PLAYGROUND_CLI_REPO }}
-          ref: ${{ env.PLAYGROUND_CLI_REF }}
-          path: .playground-cli
-
-      - name: Build playground CLI binary
-        working-directory: .playground-cli
-        run: |
-          # --no-frozen-lockfile: the pinned fork commit's pnpm-lock can lag its
-          # package.json (cdm-env repointed without relocking). We only need the
-          # binary; cdm-env@2.1.0 is public on npm.
-          pnpm install --no-frozen-lockfile
-          bun build --compile src/index.ts --outfile "$RUNNER_TEMP/playground"
-          "$RUNNER_TEMP/playground" --version
-
-      - name: Sanity — Summit CDM registry resolves (w3s populated)
-        working-directory: .playground-cli
-        run: |
-          node --input-type=module -e "import {getRegistryAddress} from '@polkadot-community-foundation/cdm-env'; const a=getRegistryAddress('w3s'); if(!a){console.error('::error::cdm-env w3s registry address is empty — Summit publish would fail'); process.exit(1)} console.log('w3s CDM registry =', a)"
-
-      # ── Deploy (storage + DotNS) — the live deploy; MUST pass ──
-      # `--no-playground`: just upload to Bulletin + bind feedback.dot. The
-      # Apps-grid publish is the SEPARATE best-effort step below.
-      - name: Deploy feedback.dot (storage + name)
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          # --mnemonic (direct signer; NEVER --suri — that rides the unauthorized
+          # public pool and fails on Summit Bulletin). --config: the product
+          # manifest (icon/name). --js-merkle: skip the Kubo download. No --publish:
+          # Summit has no Publisher. feedback.dot must already be owned by the signer
+          # (8-char label is PoP-gated → pre-registered via registerReserved; see
+          # DEPLOY_SUMMIT.md). The tool then sees `already-owned-by-us`.
+          command: >
+            polkadot-app-deploy
+            --env summit
+            --mnemonic "$MNEMONIC"
+            --config ./polkadot-app-deploy.config.ts
+            --js-merkle
+            --no-transfer-to-signedin-user
+            ./dist feedback.dot
         env:
+          # Summit Bulletin-authorized uploader / DotNS owner of feedback.dot (5Fk8,
+          # the canonical W3S publisher). Set in repo secrets before the first deploy.
           MNEMONIC: ${{ secrets.SUMMIT_DEPLOYER_KEY }}
-        run: |
-          set -euo pipefail
-          "$RUNNER_TEMP/playground" deploy \
-            --env summit \
-            --signer dev --suri "$MNEMONIC" \
-            --domain feedback \
-            --buildDir dist --no-build \
-            --no-contracts \
-            --no-playground
-
-      # ── Best-effort: list feedback.dot in the playground Apps grid (+ moddable
-      #    source link). `publish` is authorization-gated on Summit and may revert
-      #    `Unauthorized`; `continue-on-error` so it never blocks the live deploy.
-      #    If it stays blocked, a playground admin pins the app (see DEPLOY_SUMMIT.md
-      #    "Apps-grid listing"). Storage is idempotent → re-upload resolves same CID.
-      - name: Publish to playground Apps grid (best-effort)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
-        continue-on-error: true
-        env:
-          MNEMONIC: ${{ secrets.SUMMIT_DEPLOYER_KEY }}
-        run: |
-          set -euo pipefail
-          "$RUNNER_TEMP/playground" deploy \
-            --env summit \
-            --signer dev --suri "$MNEMONIC" \
-            --domain feedback \
-            --buildDir dist --no-build \
-            --no-contracts \
-            --playground --moddable --tag "$PLAYGROUND_TAG"
-
-      - name: Deployment summary
-        if: always()
-        run: |
-          {
-            echo "### Feedback Board → Summit"
-            echo
-            echo "Live &nbsp; https://feedback.dot.li  (\`feedback.dot\`)"
-            echo
-            echo "Apps-grid publish is best-effort (authorization-gated on Summit). If that"
-            echo "step is red, the app is still live — a playground admin pins it to the grid."
-            echo "See DEPLOY_SUMMIT.md \"Apps-grid listing\"."
-          } >> "$GITHUB_STEP_SUMMARY"
