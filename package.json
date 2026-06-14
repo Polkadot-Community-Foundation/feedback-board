@@ -11,7 +11,7 @@
     "build:contracts": "cdm build",
     "deploy": "cdm deploy -n w3s",
     "deploy:w3s": "cdm deploy -n w3s",
-    "deploy:frontend:summit": "APP_DOTNS_DOMAIN=feedback polkadot-app-deploy --env summit --mnemonic --js-merkle ./dist feedback.dot",
+    "deploy:frontend:summit": "polkadot-app-deploy --env summit --mnemonic \"$MNEMONIC\" --config ./polkadot-app-deploy.config.ts --js-merkle --no-transfer-to-signedin-user ./dist feedback.dot",
     "preview": "vite preview"
   },
   "dependencies": {
