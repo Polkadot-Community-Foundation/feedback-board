@@ -4,24 +4,24 @@ This is the operator guide for the **PCF-run Feedback Board on the Summit
 network** — distinct from [DEPLOYMENT.md](./DEPLOYMENT.md), which is the tutorial
 for remixers deploying their *own* copy via the Polkadot Playground on Paseo.
 
-The repo on `main` is already retargeted to Summit. "Deploy" is **two legs**:
+The repo on `main` is already retargeted to Summit. "Deploy" is **three legs**:
 
 | Leg | What | Where | How | When |
 |---|---|---|---|---|
 | **A — contract** | `@polkadot/feedback` (Rust → PolkaVM) | Summit Asset Hub, registered in the CDM `ContractRegistry` | `cdm deploy -n w3s` — **manual, on the operator VM** | one-time (greenfield) |
-| **B — frontend + Apps grid** | the Vite SPA | Summit Bulletin (bound to `feedback.dot`) **+ the playground registry** (`@polkadot/playground-registry` `0x14C27954…`, moddable) | the PCF **`playground-cli`** fork — `playground deploy --env summit --playground --moddable` — **CI on push to `main`** | every frontend change |
+| **B — frontend** | the Vite SPA | Summit Bulletin Chain, bound to `feedback.dot` | `polkadot-app-deploy --env summit` — **CI on push to `main`** | every frontend change |
+| **C — Apps-grid listing** | the moddable registry entry | the playground registry (`@polkadot/playground-registry` `0x14C27954…`) | **admin-side** — a registry sudo publishes/pins it | once |
 
-Feedback Board is a **playground sample app**, so Leg B uses the **playground-cli**
-(not `polkadot-app-deploy`): it is the only tool that hosts + binds the name **and**
-writes the moddable Apps-grid entry into the playground registry, so the app shows
-in the Apps grid and can be `playground mod feedback.dot`'d. The Summit publish leg
-requires the **env-aware-publish fix** (PCF playground-cli #2) — the CI pins that
-SHA; earlier commits published the registry entry to Paseo, not Summit.
+Leg B host+binds the name reliably via **`polkadot-app-deploy`**. The **Apps-grid
+listing (Leg C) is intentionally NOT in this repo's CI**: the playground registry's
+`publish` is authorization-gated, and an app's own CI signer (the playground-cli
+`--suri` hdkd account) is **not** the registry sudo, so a self-publish reverts
+`Unauthorized`. The listing is done by a **registry admin** signing as the sudo.
 
 The SPA resolves the contract address from the **on-chain CDM registry at boot**
-(`ContractManager.fromLiveClient`, `libraries: ["@polkadot/feedback"]`), so once
-the contract is registered, the frontend never needs a hardcoded address — a
-redeploy of either leg is independent.
+(`ContractManager.fromLiveClient`, `libraries: ["@polkadot/feedback"]`), so once the
+contract is registered the frontend never needs a hardcoded address — the legs are
+independent.
 
 ## Network & accounts
 
@@ -32,101 +32,80 @@ redeploy of either leg is independent.
 | Bulletin RPC | `wss://summit-bulletin-rpc.polkadot.io` |
 | IPFS gateway | `https://summit-ipfs.polkadot.io/ipfs` |
 | CDM `ContractRegistry` | `0xa5747e60ae27f93e92019e4021abfc4957050141` (in `cdm.json`) |
-| Asset Hub genesis | `0xf388dc6d6cdf6fb77eac3c4a91f31bc0c8642b142f1a757512ab7849f9f70660` |
-| Signer (both legs) | **5Fk8** `5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f` (W3S publisher) — Bulletin-authorized uploader + owner of `feedback.dot` |
+| `@polkadot/feedback` (deployed) | `0x86Cc121993A2B7Aa53EC8222B63D2053eF352f32` |
+| Signer (legs A + B) | **5Fk8** `5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f` (W3S publisher) — Bulletin-authorized uploader + owner of `feedback.dot` |
 
 ## Prerequisites (operator)
 
 - **`SUMMIT_DEPLOYER_KEY`** repo secret = the 5Fk8 mnemonic. Used by CI for Leg B.
 - 5Fk8 funded with SUM, **Revive-mapped**, and **Bulletin-authorized** (allowance
-  expires ~14 days; refresh via the authorizer — see the OPS bulletin-renewal
-  runbook).
-- **`feedback.dot` pre-registered to 5Fk8.** `feedback` is **8 chars** → DotNS
-  `PopRules` gates 6–8 char labels behind **PoP-Full**, which isn't effective on
-  Summit (5Fk8 reads `NoStatus`). So the SPA deploy can **not** self-register it —
-  it must be registered ahead of time via the **`registerReserved` owner-override**
-  (signed by the DotNS owner key `0x8c78b53f…`, name granted to 5Fk8), exactly like
-  `browse.dot`/`t3rminal.dot`. After that, the deploy sees `already-owned-by-us` and
-  only sets the contenthash. (≥9-char labels are not gated; an alternative is to use
-  `feedback-board.dot`.)
-- CDM toolchain on the VM (`cdm --version`) that knows the `w3s` preset
-  (`@polkadot-community-foundation/cdm-cli`). If `cdm deploy -n w3s` errors
-  `Unknown chain "w3s"`, the CLI predates the preset.
+  expires ~14 days; refresh via the authorizer — OPS bulletin-renewal runbook).
+- **`feedback.dot` registered to 5Fk8.** `feedback` is **8 chars** → DotNS `PopRules`
+  gates 6–8 char labels behind **PoP-Full** (not effective on Summit, 5Fk8 reads
+  `NoStatus`), so it was registered via the **`registerReserved` owner-override**
+  (DotNS owner key `0x8c78b53f…`, granted to 5Fk8). Done. `polkadot-app-deploy` then
+  sees `already-owned-by-us`.
 
-## Leg A — deploy the contract (manual, VM, one-time)
+## Leg A — deploy the contract (manual, VM, one-time) — DONE
 
 ```sh
-cdm account set -n w3s --mnemonic "<5Fk8 mnemonic>"   # save signer for -n w3s
-cdm account map  -n w3s                                # Revive map (idempotent)
-cdm account bal  -n w3s                                # MUST print 5Fk8…; cdm uses hdkd derivation
-
-npm run build:contracts                                # cdm build → PolkaVM blob + ABI
-npm run deploy:w3s                                     # cdm deploy -n w3s
-
-# cdm deploy does NOT write cdm.json — pull the new address in, then commit:
-cdm i -n w3s @polkadot/feedback
-git add cdm.json && git commit -m "chore: deploy @polkadot/feedback to Summit"
+cdm account set -n w3s --mnemonic "<5Fk8 mnemonic>"
+cdm account map  -n w3s
+cdm account bal  -n w3s                  # MUST print 5Fk8…; cdm uses hdkd derivation
+npm run build:contracts                  # cdm build (needs the committed .cargo target spec)
+npm run deploy:w3s                       # cdm deploy -n w3s
 ```
 
-Notes:
-- `cdm deploy` instantiates on Asset Hub **and** publishes the ABI to Bulletin
-  with the *same* signer — hence 5Fk8 must be Bulletin-authorized.
-- The contract is **permissionless** (anyone can `postFeedback`; no owner/admin
-  roles), so there is no post-deploy ownership handoff.
-- Committing `cdm.json` to `main` triggers the CI frontend deploy (Leg B) with
-  the real address baked in (belt-and-suspenders; the SPA also live-resolves it).
+⚠️ **`cdm install` does NOT write `cdm.json`** for this repo — the published metadata
+carries an **empty Solidity ABI** (a known family-wide abi-gen/.cargo toolchain quirk:
+`serde` won't compile under the forced PolkaVM target; shared with simple-survey/RPS).
+**Benign:** the committed `cdm.json` already holds the correct 4-method ABI, and the
+frontend live-resolves the address. The deployed address (`0x86Cc1219…2f32`) and
+`metadataCid` were patched into `cdm.json` by hand (resolved via
+`ContractManager.fromLiveClient` with 5Fk8's mapped origin). The contract is
+**permissionless** (no owner/admin) → no ownership handoff.
 
-## Leg B — deploy the frontend + Apps-grid entry (CI)
+## Leg B — deploy the frontend (CI, automatic)
 
-`.github/workflows/deploy-summit.yml` builds the playground-cli fork from source
-(pinned to the env-aware-publish fix SHA) and runs, signed by `SUMMIT_DEPLOYER_KEY`:
-build SPA → assert Paseo-free → host on Bulletin + bind `feedback.dot` + publish
-the moddable entry into the playground registry. **Run the first (greenfield)
-publish via `workflow_dispatch`** so it can be watched; day-2 changes redeploy on
-push to `main`.
+`.github/workflows/deploy-summit.yml` runs on push to `main`: build → assert the
+bundle is Paseo-free → `polkadot-app-deploy --env summit --mnemonic … --config
+--js-merkle --no-transfer-to-signedin-user ./dist feedback.dot`, signed by
+`SUMMIT_DEPLOYER_KEY`.
 
-Manual equivalent on the VM (needs the PCF `playground` fork on PATH):
+Manual equivalent on the VM:
 
 ```sh
 npm run build:frontend
 export MNEMONIC="<5Fk8 mnemonic>"
 npm run deploy:frontend:summit
-# = playground deploy --env summit --no-build --buildDir dist --domain feedback
-#     --signer dev --suri "$MNEMONIC" --no-contracts --playground --moddable --tag social
+# = polkadot-app-deploy --env summit --mnemonic "$MNEMONIC" --config ./polkadot-app-deploy.config.ts
+#     --js-merkle --no-transfer-to-signedin-user ./dist feedback.dot
 ```
 
-- **`--no-contracts`** — the contract is deployed separately (Leg A); the SPA
-  live-resolves its address.
-- **`--moddable`** records the repo's `git origin` as the public source so attendees
-  can `playground mod feedback.dot`.
-- Pin the playground-cli to the **env-aware-publish fix SHA** — earlier commits route
-  the `--playground` publish to Paseo, not Summit.
+- **`--mnemonic` (direct signer), never `--suri`** — `--suri` rides the unauthorized
+  public pool and the Bulletin upload fails on Summit.
+- **Never `--publish`** — Summit has no Publisher.
 
-### Apps-grid listing (the curation reality)
+## Leg C — Apps-grid listing (admin-side, one-time)
 
-CI splits the deploy for resilience: the **name bind (`--no-playground`) MUST pass**,
-but the **`--playground` Apps-grid publish is best-effort (`continue-on-error`)**. On
-Summit the playground registry's `publish` is **authorization-gated and reverts
-`Unauthorized`** for the deploy signer (the playground-cli hdkd-signer is not the
-registry sudo — the keyring-vs-hdkd derivation gap), so it may stay red. That does NOT
-take the app down — `feedback.dot` is live regardless.
+Feedback Board is a playground sample app, so it should appear in the playground
+**Apps grid** as moddable. This can't be done from this repo's CI (self-publish
+reverts `Unauthorized` — the deploy signer is not the registry sudo). A **registry
+admin** (the `@polkadot/playground-registry` sudo) lists it, signing as the sudo:
 
-The canonical way feedback.dot lands in the **Apps grid** is a **playground admin
-pinning it** via `pin-apps.ts` in `playground-app-community` (the curation model used
-for every sample app), e.g.:
+- via the PCF **`playground-cli`** (the env-aware-publish fix, pinned ≥ `b41fecc`):
+  `playground deploy --env summit --signer dev --suri "<registry-sudo mnemonic>"
+  --domain feedback --buildDir dist --no-build --no-contracts --playground --moddable
+  --tag social`, **or**
+- via `playground-app-community`'s curation scripts (`pin-apps.ts feedback.dot`) once
+  the entry exists.
 
-```sh
-# in playground-app-community, run by a registry admin:
-ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
-  MNEMONIC="<registry sudo/admin mnemonic>" \
-  pnpm tsx scripts/pin-apps.ts feedback.dot
-```
+`feedback.dot` is already live and `--moddable` will record this repo's `git origin`
+as the public source, so `playground mod feedback.dot` works after the listing.
 
 ## Verify
 
-- `cdm i -n w3s @polkadot/feedback` resolves to the deployed address.
-- `curl -sSI https://feedback.dot.li | head -1` → `200`.
-- Open `feedback.dot` inside Polkadot Desktop/Mobile: sign in, the board loads,
-  posting a note writes to the contract and uploads the note JSON to Bulletin.
-- Record the contract address, ABI metadata CID, SPA root CID, and `feedback.dot`
-  in the Summit deployments register.
+- `https://feedback.dot.li` → 200; open `feedback.dot` in Polkadot Desktop/Mobile,
+  sign in, pin a note → writes to `@polkadot/feedback` + uploads the note to Bulletin.
+- (after Leg C) the app card shows in the playground Apps tab, tagged `social`.
+- Record the SPA root CID + `feedback.dot` in the Summit deployments register.
