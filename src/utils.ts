@@ -1,40 +1,31 @@
 import { useState, useEffect } from "react";
 import {
-    createAccountsProvider,
-    createPapiProvider,
-    hostApi,
     preimageManager,
     requestPermission,
-    sandboxTransport,
-    type ProductAccount,
 } from "@novasamatech/host-api-wrapper";
-import { enumValue, RequestCredentialsErr } from "@novasamatech/host-api";
+import {
+    SignerManager,
+    HostProvider,
+    DevProvider,
+    HostUnavailableError,
+    NoAccountsError,
+    type SignerAccount,
+} from "@parity/product-sdk-signer";
+import { createChainClient } from "@parity/product-sdk-chain-client";
 import {
     ContractManager,
     createContractRuntimeFromClient,
     ensureContractAccountMapped,
 } from "@parity/product-sdk-contracts";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
-import { ss58ToH160 } from "@parity/product-sdk-address";
-import { createClient, AccountId, type PolkadotSigner } from "polkadot-api";
-import { getWsProvider } from "@polkadot-api/ws-provider";
+import type { PolkadotClient, PolkadotSigner } from "polkadot-api";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { CID } from "multiformats/cid";
 import * as raw from "multiformats/codecs/raw";
 import type { MultihashDigest } from "multiformats/hashes/interface";
 
-// Paseo Asset Hub Next (v2) — chain reset 2026-06-02.
-const PASEO_ASSET_HUB_GENESIS =
-    "0xbf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f" as const;
-const PASEO_ASSET_HUB_WS = "wss://paseo-asset-hub-next-rpc.polkadot.io";
-
 // ---------------------------------------------------------------------------
-// Permissions + resource allowances.
-//
-// `requestPermission` covers ChainSubmit / PreimageSubmit / StatementSubmit;
-// `requestResourceAllocation` covers on-chain quotas (SmartContractAllowance,
-// BulletinAllowance, AutoSigning). Paseo Next v2 requires BOTH before any
-// Revive.call or preimage submit.
+// Permissions (RFC-0002)
 // ---------------------------------------------------------------------------
 
 const _grantedPermissions = new Set<string>();
@@ -45,81 +36,82 @@ async function ensurePermission(tag: "ChainSubmit" | "PreimageSubmit" | "Stateme
         const result = await requestPermission({ tag, value: undefined });
         if (result.isOk() && result.value) {
             _grantedPermissions.add(tag);
+            console.log(`[Permission] ${tag} granted`);
         } else {
-            console.warn(`[Permission] ${tag} denied`);
+            console.warn(`[Permission] ${tag} denied`, result.isErr() ? result.error : "user rejected");
         }
     } catch (err) {
         console.warn(`[Permission] ${tag} request failed:`, err);
     }
 }
 
-let _allowancesPromise: Promise<void> | null = null;
-
-export function claimDefaultAllowances(): Promise<void> {
-    if (_allowancesPromise) return _allowancesPromise;
-    _allowancesPromise = doClaim().catch(err => {
-        _allowancesPromise = null;
-        throw err;
-    });
-    return _allowancesPromise;
-}
-
-async function doClaim(): Promise<void> {
-    console.info("[Allowance] requesting BulletinAllowance + SmartContractAllowance(0) + AutoSigning");
-    const result = await hostApi.requestResourceAllocation(
-        enumValue("v1", [
-            enumValue("BulletinAllowance", undefined),
-            enumValue("SmartContractAllowance", 0),
-            enumValue("AutoSigning", undefined),
-        ]),
-    );
-    result.match(
-        (response: any) => {
-            const outcomes = (response?.value as Array<{ tag?: string }>) ?? [];
-            const order = ["BulletinAllowance", "SmartContractAllowance(0)", "AutoSigning"];
-            outcomes.forEach((o, i) => console.info(`[Allowance] ${order[i]}: ${o.tag ?? "unknown"}`));
-        },
-        (err: unknown) => {
-            console.warn("[Allowance] requestResourceAllocation failed:", err);
-        },
-    );
-}
-
 // ---------------------------------------------------------------------------
-// Account flow — host-api-wrapper.
-//
-// We deliberately use @novasamatech/host-api-wrapper rather than the frozen
-// @novasamatech/product-sdk. Only host-api-wrapper accepts the
-// `"createTransaction"` signerType, which routes via host_create_transaction
-// and preserves Paseo Next v2's signed extensions (AsPgas, AsRingAlias,
-// EthSetOrigin, AuthorizeCall) — without it every signed tx fails BadProof.
+// Account flow — @parity/product-sdk-signer (SignerManager + HostProvider).
 // ---------------------------------------------------------------------------
 
-const accountsProvider = createAccountsProvider(sandboxTransport);
-const accountIdCodec = AccountId();
-
-// Polkadot Desktop ≥0.7.5 accepts the raw `window.location.host` for both
-// `.dot` domains and `localhost:PORT`. Appending `.dot` would make the signer
-// identifier diverge from the host context and the host denies signing.
-function getProductIdentifier(): string | null {
-    if (typeof window === "undefined") return null;
-    return window.location.host || null;
-}
+/**
+ * Identifier the host uses to scope our app-scoped product account, following
+ * the product-sdk convention (`"<name>.dot"`). It is a fixed constant, NOT
+ * derived from `window.location.host` — the same identifier must resolve the
+ * same product account whether the app runs on localhost, `<name>.dot` in
+ * Polkadot Desktop, or `<name>.dot.li` in a browser. (Reading the host would
+ * give `<name>.dot.li` on the gateway and break account resolution there.)
+ * When deploying your own mod, change it to `"<your-name>.dot"`.
+ */
+const PRODUCT_ID = "feedback-board.dot";
+const DERIVATION_INDEX = 0;
 
 export function getAppAccountId(): [string, number] {
-    const identifier = getProductIdentifier() ?? "feedback-board.dot";
-    return [identifier, 0];
+    return [PRODUCT_ID, DERIVATION_INDEX];
 }
 
+/**
+ * SignerManager wired to the Host API. The host derives an app-scoped product
+ * account from `dotNsIdentifier`; HostProvider pins signing to
+ * `createTransaction`, so pallet-revive's Paseo Next v2 signed extensions
+ * (AsPgas, AsRingAlias, CheckWeight, WeightReclaim) are forwarded to the host
+ * as opaque bytes rather than going through the PJS bridge that rejects unknown
+ * extensions. It also requests the host's `ChainSubmit` permission on connect.
+ */
+export const signerManager = new SignerManager({
+    dappName: "feedback-board",
+    createProvider: (type) =>
+        type === "host"
+            ? new HostProvider({
+                  productAccount: { dotNsIdentifier: PRODUCT_ID, derivationIndex: DERIVATION_INDEX },
+              })
+            : new DevProvider(),
+});
+
 export interface AppAccount {
+    /** SS58 string derived from the host's product public key. */
     address: string;
-    h160Address: string;
+    /** EVM-style h160 (keccak256(publicKey)[12..]) for pallet-revive contract args. */
+    h160Address: `0x${string}`;
+    /** 32-byte public key. */
     publicKey: Uint8Array;
+    /** Display name (optional). */
     name: string | null;
+    /** PolkadotSigner ready for `tx.signSubmitAndWatch`. */
     signer: PolkadotSigner;
+    /** [identifier, derivationIndex] used by host-mediated APIs. */
     productAccountId: [string, number];
-    productAccount: ProductAccount;
+    /** Backwards-compat: components call account.getSigner(). */
     getSigner(): PolkadotSigner;
+}
+
+/** Adapt a SignerAccount from the SDK to the app's AppAccount shape. */
+function toAppAccount(sa: SignerAccount): AppAccount {
+    const signer = sa.getSigner();
+    return {
+        address: sa.address,
+        h160Address: sa.h160Address,
+        publicKey: sa.publicKey,
+        name: sa.name,
+        signer,
+        productAccountId: [PRODUCT_ID, DERIVATION_INDEX],
+        getSigner: () => signer,
+    };
 }
 
 interface AccountState {
@@ -151,62 +143,53 @@ export async function connectAccount(): Promise<void> {
     setState({ status: "connecting", account: null });
 
     try {
-        const [identifier, derivationIndex] = getAppAccountId();
-        const provider = accountsProvider as any;
-        const result = await provider.getProductAccount(identifier, derivationIndex);
-        if (result.isErr()) {
-            if (result.error instanceof RequestCredentialsErr.NotConnected) {
+        console.log(`[Account] Connecting product account ${PRODUCT_ID}#${DERIVATION_INDEX}`);
+        const result = await signerManager.connect("host");
+
+        if (!result.ok) {
+            // Not inside a host / not signed in → prompt sign-in rather than error.
+            if (result.error instanceof HostUnavailableError || result.error instanceof NoAccountsError) {
                 setState({ status: "signed-out", account: null });
                 return;
             }
-            const errMsg = `${(result.error as any)?.tag ?? "Unknown"}: ${(result.error as any)?.value?.reason ?? String(result.error)}`;
-            setState({ status: "error", account: null, error: errMsg });
+            console.warn("[Account] connect error:", result.error.message);
+            setState({ status: "error", account: null, error: result.error.message });
             return;
         }
 
-        const { publicKey } = result.value;
-        const productAccount: ProductAccount = { dotNsIdentifier: identifier, derivationIndex, publicKey };
-        const signer = provider.getProductAccountSigner(productAccount, "createTransaction");
-        const ss58 = accountIdCodec.dec(publicKey);
-        const h160Address = ss58ToH160(ss58 as never) as `0x${string}`;
+        const accounts = result.value;
+        if (accounts.length === 0) {
+            setState({ status: "signed-out", account: null });
+            return;
+        }
 
-        let displayName: string | null = null;
-        try {
-            const userIdResult = await provider.getUserId();
-            if (userIdResult.isOk()) {
-                displayName = (userIdResult.value as any).primaryUsername ?? null;
-            }
-        } catch { /* optional */ }
+        // Host product mode returns the single app-scoped account; select it so
+        // `signerManager.getSigner()` and persistence track it.
+        const selected = signerManager.selectAccount(accounts[0].address);
+        const account = toAppAccount(selected.ok ? selected.value : accounts[0]);
 
-        const account: AppAccount = {
-            address: ss58,
-            h160Address,
-            publicKey,
-            name: displayName,
-            signer,
-            productAccountId: [identifier, derivationIndex],
-            productAccount,
-            getSigner: () => signer,
-        };
+        // Wire signer + origin defaults so contract queries don't fall back to
+        // the dev Alice account and tx calls don't need explicit `{ signer }`.
+        if (_contractManager) {
+            _contractManager.setDefaults({ origin: account.address as never, signer: account.signer });
+        }
 
+        console.log(`[Account] Ready — ${account.address} (h160 ${account.h160Address}) (${account.name ?? PRODUCT_ID})`);
         setState({ status: "ready", account });
-
-        // Kick off resource allowances eagerly so the user only sees one host
-        // modal per session (BulletinAllowance + SmartContractAllowance).
-        void claimDefaultAllowances();
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        console.error("[Account] Connect failed:", msg);
         setState({ status: "error", account: null, error: msg });
     }
 }
 
+/** Retry the host connection. The host drives its own sign-in UI. */
 export async function signIn(): Promise<void> {
-    await (accountsProvider as any).requestLogin("Sign in to post to the feedback board");
     await connectAccount();
 }
 
 // ---------------------------------------------------------------------------
-// Bulletin upload — host preimage path.
+// Bulletin upload — host preimage path (works in dev mode)
 // ---------------------------------------------------------------------------
 
 const BLAKE2B_256_CODE = 0xb220;
@@ -241,39 +224,30 @@ export function calculateCID(bytes: Uint8Array): string {
 
 export async function uploadToBulletin(_account: AppAccount, bytes: Uint8Array): Promise<string> {
     await ensurePermission("PreimageSubmit");
-    await claimDefaultAllowances();
     const cid = calculateCID(bytes);
+    console.log("[Bulletin] Submitting preimage via host, size:", bytes.length, "expected CID:", cid);
     await preimageManager.submit(bytes);
+    console.log("[Bulletin] Preimage stored.");
     return cid;
 }
 
 // ---------------------------------------------------------------------------
-// Contracts (ContractManager.fromLiveClient).
-//
-// `fromLiveClient` resolves the deployed contract address from the on-chain
-// CDM registry on each init, instead of trusting the snapshot in cdm.json.
-// A redeploy is picked up without shipping a new cdm.json. The registry call
-// is itself a view query and so requires a mapped origin — we map the user's
-// account first with a plain runtime, then build the full ContractManager.
+// Contracts (ContractManager + product-sdk-chain-client). The host routes the
+// Asset Hub connection in both dev (localhost in Polkadot Desktop) and prod
+// (`.dot.li`), so there is no hardcoded genesis or localhost branching.
 // ---------------------------------------------------------------------------
 
 let _contractManager: ContractManager | null = null;
 let _contract: any = null;
-let _polkadotClient: ReturnType<typeof createClient> | null = null;
-let _cdmJson: any = null;
-let _contractInitPromise: Promise<void> | null = null;
+let _polkadotClient: PolkadotClient | null = null;
 
-export function stageCdmJson(cdmJson: any): void {
-    _cdmJson = cdmJson;
-}
-
-export async function initContracts(cdmJson: any): Promise<void> {
-    stageCdmJson(cdmJson);
-}
-
-// `getBestBlocks` retry wrapper — Polkadot Desktop tears down the chainHead
-// follow when idle; the first request after wake bails with "No active follow".
-async function wakeChainFollow(): Promise<void> {
+/**
+ * Wake the Asset Hub chain follow before a contract call. The host container
+ * tears down the follow when the tab is backgrounded long enough; the first
+ * request after wake bails with "No active follow for this chain" until we
+ * touch the client to trigger a re-follow.
+ */
+export async function wakeChainFollow(): Promise<void> {
     if (!_polkadotClient) return;
     try {
         await _polkadotClient.getBestBlocks();
@@ -284,6 +258,10 @@ async function wakeChainFollow(): Promise<void> {
 
 const NO_FOLLOW_RE = /no active follow/i;
 
+/**
+ * Wrap a contract method handle so each `query()` / `tx()` first wakes the
+ * chain follow and retries once on "No active follow for this chain".
+ */
 function withFollowRetry<T extends Record<string, any>>(method: T): T {
     const wrap = <Fn extends (...a: any[]) => Promise<any>>(fn: Fn): Fn =>
         (async (...args: any[]) => {
@@ -298,6 +276,7 @@ function withFollowRetry<T extends Record<string, any>>(method: T): T {
                 return await fn(...args);
             }
         }) as Fn;
+
     return new Proxy(method, {
         get(target, prop) {
             const v = target[prop as keyof T];
@@ -319,41 +298,71 @@ function wrapContract(contract: any): any {
     });
 }
 
+let _cdmJson: any = null;
+let _contractInitPromise: Promise<void> | null = null;
+
+/** Stage cdm.json without opening the Asset Hub chain client yet. */
+export function stageCdmJson(cdmJson: any): void {
+    _cdmJson = cdmJson;
+}
+
+export async function initContracts(cdmJson: any): Promise<void> {
+    stageCdmJson(cdmJson);
+}
+
+/**
+ * Lazy contract init. Holding an Asset Hub PolkadotClient open (with its
+ * chain-head follow) at app startup interferes with Bulletin preimage submits
+ * — only spin up the chain client when a contract call is actually about to
+ * happen. This defers `createChainClient` until the first `getContract()`
+ * consumer calls a method.
+ */
 async function ensureContractsReady(): Promise<void> {
     if (_contractManager || !_cdmJson) return;
     if (_contractInitPromise) return _contractInitPromise;
     _contractInitPromise = (async () => {
         await ensurePermission("ChainSubmit");
-        await claimDefaultAllowances();
 
-        // Asset Hub access:
-        //   localhost dev — host refuses to follow unregistered domains, so go
-        //     direct WS.
-        //   deployed .dot — route through host's chainHead follow via
-        //     createPapiProvider with WS fallback.
-        const isDevHost =
-            typeof window !== "undefined" && /^localhost(:\d+)?$/.test(window.location.host);
-        const provider = isDevHost
-            ? getWsProvider(PASEO_ASSET_HUB_WS)
-            : createPapiProvider(PASEO_ASSET_HUB_GENESIS, getWsProvider(PASEO_ASSET_HUB_WS));
-        _polkadotClient = createClient(provider);
+        // Asset Hub access goes through the host's chain client — both dev
+        // (localhost in Polkadot Desktop) and prod (`.dot.li`) run inside a host.
+        // `createChainClient` routes every connection through the host provider
+        // (the `rpcs` field is a fallback only), so the host never prompts
+        // "Allow Access to Web Domains" for a raw RPC endpoint, and the chain
+        // identity comes from the descriptor — no hardcoded genesis.
+        const chainClient = await createChainClient({
+            chains: { assetHub: paseo_asset_hub },
+            rpcs: { assetHub: ["wss://paseo-asset-hub-next-rpc.polkadot.io"] },
+        });
+        const client = chainClient.raw.assetHub;
+        _polkadotClient = client;
+        console.log("[CDM] Asset Hub chain client ready (host-routed)");
 
-        await _polkadotClient.getChainSpecData();
-        await _polkadotClient.getBestBlocks();
+        console.log("[CDM] Waking Asset Hub chain follow...");
+        await client.getChainSpecData();
+        await client.getBestBlocks();
+        console.log("[CDM] Chain follow active.");
 
+        // The app gates the board behind sign-in (see App.tsx — content only
+        // renders when status === "ready" with a connected account), so contract
+        // init is never reached before a mapped product account exists.
         if (!_state.account) {
             throw new Error("[CDM] Contract init reached without a connected account");
         }
 
-        // Map account BEFORE fromLiveClient. `fromLiveClient` immediately calls
-        // `registry.getAddress(...)` as a view, and pallet-revive dry-run-fails
-        // that with `Revive::AccountUnmapped` if the query origin isn't mapped.
-        const initRuntime = createContractRuntimeFromClient(_polkadotClient, paseo_asset_hub);
+        // Map the product account BEFORE live registry resolution. `fromLiveClient`
+        // immediately calls `registry.getAddress("@example/feedback")` as a view,
+        // and pallet-revive dry-run-fails that call with `Revive::AccountUnmapped`
+        // when the query origin isn't mapped. Build a plain runtime (no registry
+        // query) to perform the mapping first.
+        const initRuntime = createContractRuntimeFromClient(client, paseo_asset_hub);
         await mapAccountWithRuntime(initRuntime, _state.account);
 
+        // `fromLiveClient` resolves the deployed contract address from the live
+        // CDM registry on each init instead of trusting the snapshot baked into
+        // cdm.json — a redeploy is picked up without shipping a new cdm.json.
         _contractManager = await ContractManager.fromLiveClient(
             _cdmJson,
-            _polkadotClient,
+            client,
             paseo_asset_hub,
             {
                 defaultOrigin: _state.account.address as never,
@@ -363,11 +372,16 @@ async function ensureContractsReady(): Promise<void> {
             },
         );
         _contract = wrapContract(_contractManager.getContract("@example/feedback"));
-        console.log("[CDM] contract ready (live registry resolution)");
+        console.log("[CDM] Contract manager ready (live registry resolution)");
     })();
     return _contractInitPromise;
 }
 
+/**
+ * Get a lazy-initialized contract handle. The Asset Hub chain client doesn't
+ * spin up until a method is actually called, so Bulletin preimage submits at
+ * startup don't compete with a chain follow.
+ */
 export function getContract(): any {
     if (!_cdmJson) return null;
     return new Proxy({}, {
@@ -388,13 +402,25 @@ export function getContract(): any {
     });
 }
 
+/**
+ * Format a 20-byte H160 for a contract `address` parameter. The product-sdk
+ * encoder accepts a `0x...` hex string for both Solidity `address` and `bytes20`.
+ */
+export function asAddress(hexOrAccount: string | AppAccount): `0x${string}` {
+    const hex = typeof hexOrAccount === "string" ? hexOrAccount : hexOrAccount.h160Address;
+    if (!hex.startsWith("0x")) return ("0x" + hex) as `0x${string}`;
+    return hex as `0x${string}`;
+}
+
 // ---------------------------------------------------------------------------
-// Revive account mapping.
+// Account mapping (Revive).
 //
 // pallet-revive on Paseo Next v2 requires every SS58 origin that calls a
-// contract to have a `Revive.map_account()` entry. `ensureContractAccountMapped`
-// is idempotent — the first call costs one signature, subsequent calls
-// short-circuit.
+// contract to have an explicit `Revive.map_account()` entry. Product accounts
+// are NOT pre-mapped by the host — the first contract call from a fresh product
+// account dry-run-fails with `Revive::AccountUnmapped` until we submit the
+// mapping tx ourselves. The helper is idempotent: the first-time path costs one
+// signature, subsequent calls short-circuit.
 // ---------------------------------------------------------------------------
 
 const _mappedAccounts = new Set<string>();
@@ -430,15 +456,6 @@ export async function ensureMapping(account: AppAccount): Promise<void> {
     await ensureContractsReady();
     if (!_contractManager) throw new Error("Contract manager not ready");
     await mapAccountWithRuntime(_contractManager.getRuntime(), account);
-}
-
-// Helper for `address`/`bytes20` contract params — accepts both an SS58
-// AppAccount and a raw hex string. The product-sdk encoder accepts a `0x...`
-// hex string for both Solidity `address` and `bytes20`.
-export function asAddress(hexOrAccount: string | AppAccount): `0x${string}` {
-    const hex = typeof hexOrAccount === "string" ? hexOrAccount : hexOrAccount.h160Address;
-    if (!hex.startsWith("0x")) return ("0x" + hex) as `0x${string}`;
-    return hex as `0x${string}`;
 }
 
 // ---------------------------------------------------------------------------
