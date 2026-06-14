@@ -1,0 +1,98 @@
+name: Deploy to Summit
+
+# Production deploy of the Feedback Board frontend to Summit (Bulletin Chain + DotNS).
+#
+# Summit-only, production-only by design: on Summit every preview domain would be
+# a fresh DotNS registration (~SUM gas + Bulletin storage that expires in ~14 days
+# + a proof-of-personhood gate on short labels), so there are NO per-PR preview
+# deploys. PR validation lives in ci.yml (typecheck + build). This job runs on
+# push to main and on manual dispatch, and always targets the single production
+# domain `feedback.dot`.
+#
+# The contract leg (`@polkadot/feedback` via `cdm deploy -n w3s`) is a one-time,
+# greenfield, manually-signed step on the operator VM — see DEPLOY_SUMMIT.md. CI
+# only ships the SPA; the SPA live-resolves the contract address from the on-chain
+# CDM registry at boot, so a frontend redeploy needs no new contract.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'cdm.json'
+      - 'package.json'
+      - 'tsconfig.json'
+      - 'vite.config.ts'
+      - 'assets/**'
+      - 'polkadot-app-deploy.config.ts'
+      - '.github/workflows/deploy-summit.yml'
+  workflow_dispatch:
+    inputs:
+      skip-cache:
+        description: 'Skip deployment cache and force redeploy'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-summit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  statuses: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No committed lockfile (.gitignore excludes them by repo convention), so
+      # `npm install` rather than `npm ci`.
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build:frontend
+
+      - name: Assert the bundle is Summit-only (no Paseo strings baked in)
+        run: |
+          if grep -rIil 'paseo' dist; then
+            echo "::error::Paseo reference found in built bundle — aborting Summit deploy"
+            exit 1
+          fi
+          echo "OK: no Paseo strings in dist"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: dist
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Summit
+    needs: build
+    uses: Polkadot-Community-Foundation/polkadot-app-deploy/.github/workflows/deploy.yml@v0.10.1
+    with:
+      dotns-domain: feedback.dot
+      artifact-name: web-build
+      env: summit
+      # Sign Bulletin storage txs with the (authorized) mnemonic account itself,
+      # NOT the public BULLETIN_POOL accounts — those are never storage-authorized
+      # on Summit and the preflight dies with "pool account N is not authorized".
+      direct-signer: true
+      polkadot-app-deploy-version: '0.10.1'
+      skip-cache: ${{ inputs.skip-cache || false }}
+      max-retries: 10
+    secrets:
+      # Summit Bulletin-authorized uploader / DotNS owner of feedback.dot (5Fk8,
+      # the canonical W3S publisher). Set in repo secrets before the first deploy.
+      mnemonic: ${{ secrets.SUMMIT_DEPLOYER_KEY }}
