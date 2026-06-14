@@ -11,7 +11,7 @@
     "build:contracts": "cdm build",
     "deploy": "cdm deploy -n w3s",
     "deploy:w3s": "cdm deploy -n w3s",
-    "deploy:frontend:summit": "polkadot-app-deploy --env summit --mnemonic \"$MNEMONIC\" --config ./polkadot-app-deploy.config.ts --js-merkle --no-transfer-to-signedin-user ./dist feedback.dot",
+    "deploy:frontend:summit": "playground deploy --env summit --no-build --buildDir dist --domain feedback --signer dev --suri \"$MNEMONIC\" --no-contracts --playground --moddable --tag social",
     "preview": "vite preview"
   },
   "dependencies": {
