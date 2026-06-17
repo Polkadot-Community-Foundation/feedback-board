@@ -58,3 +58,11 @@ Thumbs.db
 .claude/settings.local.json
 .aider*
 .cursor/
+
+# AI session / per-developer local state
+.claude/sessions/
+.claude/cache/
+.claude/settings.local.json
+
+# Product SDK skills — fetched by ./setup.sh, not committed (kept fresh, never stale)
+.claude/skills/
