@@ -9,13 +9,16 @@ name: Deploy to Summit
 # push to main and on manual dispatch, and always targets the single production
 # domain `feedback.dot`.
 #
-# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.10.1 — it ships
-# the built-in `summit` env (RPCs + DotNS addresses + summit-ipfs gateway) and the
-# manifest direct-signer fix. Installed + run inline (NOT the @parity-scoped
-# reusable workflow, which pins a @parity/polkadot-app-deploy version that is not
-# published). Flags mirror the proven w3s-payment-processor / browse path:
-# --mnemonic (direct signer, never --suri), --config, --js-merkle, no --publish
-# (Summit has no Publisher).
+# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.11.1 — it ships
+# the built-in `summit` env (RPCs + DotNS addresses + summit-ipfs gateway), the
+# manifest direct-signer fix, AND the Summit Publisher address
+# (0xf5fe0fc9f4c13dfd3a4a8abd27e64eb652157494) wired in, which `--publish` needs.
+# Installed + run inline (NOT the @parity-scoped reusable workflow, which pins a
+# @parity/polkadot-app-deploy version that is not published). Flags mirror the
+# proven browse / festival path: --mnemonic (direct signer, never --suri),
+# --config, --js-merkle, and --publish so feedback.dot lists in the `browse`
+# app-directory. The deploy signer (5Fk8) is the Publisher's OWNER, so publishing
+# carries no proof-of-personhood gate and no rate limit for any `.dot` it owns.
 #
 # The contract leg (`@polkadot/feedback` via `cdm deploy -n w3s`) is a one-time,
 # greenfield, manually-signed step on the operator VM — see DEPLOY_SUMMIT.md. CI
@@ -70,7 +73,7 @@ jobs:
           echo "OK: no Paseo strings in dist"
 
       - name: Install deploy tool
-        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.10.1
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.11.1
 
       - name: Deploy to Summit Bulletin + bind feedback.dot
         uses: nick-fields/retry@v3
@@ -80,16 +83,20 @@ jobs:
           retry_wait_seconds: 30
           # --mnemonic (direct signer; NEVER --suri — that rides the unauthorized
           # public pool and fails on Summit Bulletin). --config: the product
-          # manifest (icon/name). --js-merkle: skip the Kubo download. No --publish:
-          # Summit has no Publisher. feedback.dot must already be owned by the signer
-          # (8-char label is PoP-gated → pre-registered via registerReserved; see
-          # DEPLOY_SUMMIT.md). The tool then sees `already-owned-by-us`.
+          # manifest (icon/name). --js-merkle: skip the Kubo download. --publish:
+          # call Summit's Publisher.publish(feedback.dot) so the app lists in the
+          # `browse` app-directory (CLI 0.11.1+ wires the Summit Publisher; the
+          # signer 5Fk8 is its owner → no PoP gate, no rate limit). feedback.dot
+          # must already be owned by the signer (8-char label is PoP-gated →
+          # pre-registered via registerReserved; see DEPLOY_SUMMIT.md). The tool
+          # then sees `already-owned-by-us`.
           command: >
             polkadot-app-deploy
             --env summit
             --mnemonic "$MNEMONIC"
             --config ./polkadot-app-deploy.config.ts
             --js-merkle
+            --publish
             --no-transfer-to-signedin-user
             ./dist feedback.dot
         env:
