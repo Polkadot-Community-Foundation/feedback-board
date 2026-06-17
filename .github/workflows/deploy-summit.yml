@@ -64,13 +64,23 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
-      - name: Assert the bundle is Summit-only (no Paseo strings baked in)
+      - name: Assert the bundle targets Summit (not the Paseo asset hub)
         run: |
-          if grep -rIil 'paseo' dist; then
-            echo "::error::Paseo reference found in built bundle — aborting Summit deploy"
+          # Assert the Summit descriptor positively, and reject only the
+          # app-selected `paseo_asset_hub` descriptor. We no longer grep for any
+          # 'paseo' string: product-sdk (>=0.15) legitimately bundles Paseo
+          # descriptor/endpoint strings (e.g. paseo-bulletin-next-rpc) into
+          # otherwise-correct Summit builds, so a blanket grep false-fails. The
+          # app selects summit_asset_hub and the host owns endpoint selection.
+          if ! grep -rIl 'summit_asset_hub' dist >/dev/null; then
+            echo "::error::Summit asset-hub descriptor missing from bundle — aborting Summit deploy"
             exit 1
           fi
-          echo "OK: no Paseo strings in dist"
+          if grep -rIl 'paseo_asset_hub' dist >/dev/null; then
+            echo "::error::Paseo asset-hub descriptor found in bundle — aborting Summit deploy"
+            exit 1
+          fi
+          echo "OK: bundle targets the Summit asset hub"
 
       - name: Install deploy tool
         run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.11.1
