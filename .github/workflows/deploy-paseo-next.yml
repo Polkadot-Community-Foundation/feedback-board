@@ -9,7 +9,7 @@ name: Deploy to Summit
 # push to main and on manual dispatch, and always targets the single production
 # domain `feedback.dot`.
 #
-# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.11.1 — it ships
+# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.12.0 — it ships
 # the built-in `summit` env (RPCs + DotNS addresses + summit-ipfs gateway), the
 # manifest direct-signer fix, AND the Summit Publisher address
 # (0xf5fe0fc9f4c13dfd3a4a8abd27e64eb652157494) wired in, which `--publish` needs.
@@ -36,11 +36,11 @@ on:
       - 'vite.config.ts'
       - 'assets/**'
       - 'polkadot-app-deploy.config.ts'
-      - '.github/workflows/deploy-summit.yml'
+      - '.github/workflows/deploy-paseo-next.yml'
   workflow_dispatch:
 
 concurrency:
-  group: deploy-summit-${{ github.ref }}
+  group: deploy-paseo-next-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -72,18 +72,18 @@ jobs:
           # descriptor/endpoint strings (e.g. paseo-bulletin-next-rpc) into
           # otherwise-correct Summit builds, so a blanket grep false-fails. The
           # app selects summit_asset_hub and the host owns endpoint selection.
-          if ! grep -rIl 'summit_asset_hub' dist >/dev/null; then
-            echo "::error::Summit asset-hub descriptor missing from bundle — aborting Summit deploy"
+          if ! grep -rIl 'paseo_asset_hub' dist >/dev/null; then
+            echo "::error::Paseo asset-hub descriptor missing from bundle — aborting paseo-next deploy"
             exit 1
           fi
-          if grep -rIl 'paseo_asset_hub' dist >/dev/null; then
-            echo "::error::Paseo asset-hub descriptor found in bundle — aborting Summit deploy"
+          if grep -rIl 'summit_asset_hub' dist >/dev/null; then
+            echo "::error::Summit asset-hub descriptor found in bundle — aborting paseo-next deploy"
             exit 1
           fi
-          echo "OK: bundle targets the Summit asset hub"
+          echo "OK: bundle targets the Paseo Next asset hub"
 
       - name: Install deploy tool
-        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.11.1
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.12.0
 
       - name: Deploy to Summit Bulletin + bind feedback.dot
         uses: nick-fields/retry@v3
@@ -102,7 +102,7 @@ jobs:
           # then sees `already-owned-by-us`.
           command: >
             polkadot-app-deploy
-            --env summit
+            --env paseo-next
             --mnemonic "$MNEMONIC"
             --config ./polkadot-app-deploy.config.ts
             --js-merkle
