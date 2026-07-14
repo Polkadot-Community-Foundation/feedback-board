@@ -102,7 +102,7 @@ jobs:
           # then sees `already-owned-by-us`.
           command: >
             polkadot-app-deploy
-            --env paseo-next
+            --env devnet
             --mnemonic "$MNEMONIC"
             --config ./polkadot-app-deploy.config.ts
             --js-merkle
