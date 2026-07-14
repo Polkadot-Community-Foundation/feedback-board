@@ -1,4 +1,4 @@
-name: Deploy to Summit
+name: Deploy to devnet
 
 # Production deploy of the Feedback Board frontend to Summit (Bulletin Chain + DotNS).
 #
@@ -48,7 +48,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Build & deploy to Summit
+    name: Build & deploy to devnet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
-      - name: Assert the bundle targets Summit (not the Paseo asset hub)
+      - name: Assert the bundle targets devnet (not the Summit asset hub)
         run: |
           # Assert the Summit descriptor positively, and reject only the
           # app-selected `paseo_asset_hub` descriptor. We no longer grep for any
@@ -85,7 +85,7 @@ jobs:
       - name: Install deploy tool
         run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.12.1
 
-      - name: Deploy to Summit Bulletin + bind feedback.dot
+      - name: Deploy to devnet Bulletin + bind feedback.dot
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
