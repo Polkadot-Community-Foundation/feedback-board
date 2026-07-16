@@ -206,6 +206,7 @@ function CreateFeedback({ account, onCreated }: {
     const [content, setContent] = useState("");
     const [authorName, setAuthorName] = useState("");
     const [statusMsg, setStatusMsg] = useState("");
+    const [needsFaucet, setNeedsFaucet] = useState(false);
     const [busy, setBusy] = useState(false);
 
     const reset = () => {
@@ -249,7 +250,19 @@ function CreateFeedback({ account, onCreated }: {
             onCreated();
         } catch (err) {
             console.error("Post feedback error:", err);
-            setStatusMsg("Failed — check console");
+            const msg = err instanceof Error ? err.message : String(err);
+            // Storing a note writes to Bulletin as the signed-in user; on the
+            // testnet that account needs a storage allowance first. Surface a
+            // clear, actionable message instead of the raw SDK error.
+            if (/allowance|not\s*authoriz|unauthoriz/i.test(msg)) {
+                setNeedsFaucet(true);
+                setStatusMsg(
+                    "Your account can't store on Bulletin yet — it needs a storage allowance on the testnet. Grab one from the faucet, then try again.",
+                );
+            } else {
+                setNeedsFaucet(false);
+                setStatusMsg("Couldn't pin the note — check the console for details.");
+            }
         } finally {
             setBusy(false);
         }
@@ -283,7 +296,23 @@ function CreateFeedback({ account, onCreated }: {
                             {remaining} characters left
                         </div>
 
-                        {statusMsg && <div className="status">{statusMsg}</div>}
+                        {statusMsg && (
+                            <div className="status">
+                                {statusMsg}
+                                {needsFaucet && (
+                                    <>
+                                        {" "}
+                                        <a
+                                            href="https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            Open the Bulletin faucet →
+                                        </a>
+                                    </>
+                                )}
+                            </div>
+                        )}
 
                         <div className="modal-actions">
                             <button
