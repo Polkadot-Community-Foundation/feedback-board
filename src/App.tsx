@@ -56,9 +56,26 @@ export default function App() {
     }
 
     if (status === "error" || !account) {
+        // A missing product account almost always just means the user isn't
+        // signed in to the host yet — the host answers the credentials request
+        // with `RequestCredentialsErr::NotConnected`. Show the friendly sign-in
+        // prompt for that case instead of a scary raw error; only surface the
+        // raw error text for genuine connection failures.
+        const notSignedIn =
+            !error || /not\s*connected|NotConnected|RequestCredentials/i.test(String(error));
+        if (notSignedIn) {
+            return (
+                <div className="empty">
+                    <div>Sign in to your Polkadot host to use the feedback board.</div>
+                    <button className="btn btn-primary" onClick={() => signIn()} style={{ marginTop: 12 }}>
+                        Sign in
+                    </button>
+                </div>
+            );
+        }
         return (
             <div className="empty">
-                <div>Failed to connect: {error ?? "no account"}</div>
+                <div>Failed to connect: {error}</div>
                 <button className="btn btn-primary" onClick={() => connectAccount()} style={{ marginTop: 12 }}>
                     Retry
                 </button>
