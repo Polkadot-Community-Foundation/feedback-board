@@ -56,9 +56,26 @@ export default function App() {
     }
 
     if (status === "error" || !account) {
+        // A missing product account almost always just means the user isn't
+        // signed in to the host yet — the host answers the credentials request
+        // with `RequestCredentialsErr::NotConnected`. Show the friendly sign-in
+        // prompt for that case instead of a scary raw error; only surface the
+        // raw error text for genuine connection failures.
+        const notSignedIn =
+            !error || /not\s*connected|NotConnected|RequestCredentials/i.test(String(error));
+        if (notSignedIn) {
+            return (
+                <div className="empty">
+                    <div>Sign in to your Polkadot host to use the feedback board.</div>
+                    <button className="btn btn-primary" onClick={() => signIn()} style={{ marginTop: 12 }}>
+                        Sign in
+                    </button>
+                </div>
+            );
+        }
         return (
             <div className="empty">
-                <div>Failed to connect: {error ?? "no account"}</div>
+                <div>Failed to connect: {error}</div>
                 <button className="btn btn-primary" onClick={() => connectAccount()} style={{ marginTop: 12 }}>
                     Retry
                 </button>
@@ -189,6 +206,7 @@ function CreateFeedback({ account, onCreated }: {
     const [content, setContent] = useState("");
     const [authorName, setAuthorName] = useState("");
     const [statusMsg, setStatusMsg] = useState("");
+    const [needsFaucet, setNeedsFaucet] = useState(false);
     const [busy, setBusy] = useState(false);
 
     const reset = () => {
@@ -232,7 +250,19 @@ function CreateFeedback({ account, onCreated }: {
             onCreated();
         } catch (err) {
             console.error("Post feedback error:", err);
-            setStatusMsg("Failed — check console");
+            const msg = err instanceof Error ? err.message : String(err);
+            // Storing a note writes to Bulletin as the signed-in user; on the
+            // testnet that account needs a storage allowance first. Surface a
+            // clear, actionable message instead of the raw SDK error.
+            if (/allowance|not\s*authoriz|unauthoriz/i.test(msg)) {
+                setNeedsFaucet(true);
+                setStatusMsg(
+                    "Your account can't store on Bulletin yet — it needs a storage allowance on the testnet. Grab one from the faucet, then try again.",
+                );
+            } else {
+                setNeedsFaucet(false);
+                setStatusMsg("Couldn't pin the note — check the console for details.");
+            }
         } finally {
             setBusy(false);
         }
@@ -266,7 +296,23 @@ function CreateFeedback({ account, onCreated }: {
                             {remaining} characters left
                         </div>
 
-                        {statusMsg && <div className="status">{statusMsg}</div>}
+                        {statusMsg && (
+                            <div className="status">
+                                {statusMsg}
+                                {needsFaucet && (
+                                    <>
+                                        {" "}
+                                        <a
+                                            href="https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            Open the Bulletin faucet →
+                                        </a>
+                                    </>
+                                )}
+                            </div>
+                        )}
 
                         <div className="modal-actions">
                             <button
