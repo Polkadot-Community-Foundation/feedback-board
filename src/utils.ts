@@ -17,7 +17,7 @@ import {
     createContractRuntimeFromClient,
     ensureContractAccountMapped,
 } from "@parity/product-sdk-contracts";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
+import { devnet_asset_hub } from "@polkadot-community-foundation/product-sdk-descriptors/devnet-asset-hub";
 import type { PolkadotClient, PolkadotSigner } from "polkadot-api";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { CID } from "multiformats/cid";
@@ -331,7 +331,7 @@ async function ensureContractsReady(): Promise<void> {
         // hardcoded genesis. (product-sdk-chain-client dropped the formerly
         // -unused `rpcs` field; the host owns endpoint selection.)
         const chainClient = await createChainClient({
-            chains: { assetHub: paseo_asset_hub },
+            chains: { assetHub: devnet_asset_hub },
         });
         const client = chainClient.raw.assetHub;
         _polkadotClient = client;
@@ -354,7 +354,7 @@ async function ensureContractsReady(): Promise<void> {
         // and pallet-revive dry-run-fails that call with `Revive::AccountUnmapped`
         // when the query origin isn't mapped. Build a plain runtime (no registry
         // query) to perform the mapping first.
-        const initRuntime = createContractRuntimeFromClient(client, paseo_asset_hub);
+        const initRuntime = createContractRuntimeFromClient(client, devnet_asset_hub);
         await mapAccountWithRuntime(initRuntime, _state.account);
 
         // `fromLiveClient` resolves the deployed contract address from the live
@@ -363,7 +363,7 @@ async function ensureContractsReady(): Promise<void> {
         _contractManager = await ContractManager.fromLiveClient(
             _cdmJson,
             client,
-            paseo_asset_hub,
+            devnet_asset_hub,
             {
                 defaultOrigin: _state.account.address as never,
                 defaultSigner: _state.account.signer,
@@ -463,7 +463,7 @@ export async function ensureMapping(account: AppAccount): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const GATEWAYS = [
-    "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs/",
+    "https://devnet-ipfs.api.polkadotcommunity.foundation/ipfs/",
     "https://dweb.link/ipfs/",
     "https://ipfs.io/ipfs/",
     "https://nftstorage.link/ipfs/",
