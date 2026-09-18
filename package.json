@@ -9,21 +9,19 @@
     "dev": "vite --host --port 3000 --strictPort",
     "build:frontend": "tsc -b && vite build",
     "build:contracts": "cdm build",
-    "deploy": "cdm deploy -n devnet --registry-address 0xf62c2ece29cd8df2e10040ecfa5a894a5c5d9cb0 --assethub-url wss://asset-hub-paseo-rpc.n.dwellir.com --bulletin-url wss://bulletin-paseo.tservices.es:8443",
+    "deploy": "cdm deploy -n paseo --registry-address 0xf62c2ece29cd8df2e10040ecfa5a894a5c5d9cb0 --assethub-url wss://paseo-asset-hub-next-rpc.polkadot.io --bulletin-url wss://paseo-bulletin-next-rpc.polkadot.io",
+    "deploy:devnet": "cdm deploy -n devnet",
     "preview": "vite preview"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
-    "@novasamatech/host-api": "^0.8.10",
-    "@novasamatech/host-api-wrapper": "^0.8.10",
-    "@parity/product-sdk": "^0.15.1",
-    "@parity/product-sdk-address": "^0.1.1",
-    "@parity/product-sdk-chain-client": "^0.7.5",
-    "@parity/product-sdk-contracts": "^0.8.1",
-    "@parity/product-sdk-descriptors": "^0.6.2",
-    "@parity/product-sdk-signer": "^0.8.2",
-    "@parity/product-sdk-tx": "^0.2.15",
-    "@polkadot-community-foundation/product-sdk-descriptors": "^0.6.2",
+    "@parity/product-sdk-address": "0.2.0",
+    "@parity/product-sdk-chain-client": "0.12.3",
+    "@parity/product-sdk-contracts": "0.10.7",
+    "@parity/product-sdk-descriptors": "0.11.0",
+    "@parity/product-sdk-host": "0.19.1",
+    "@parity/product-sdk-signer": "0.14.4",
+    "@parity/product-sdk-tx": "0.4.7",
     "multiformats": "^13.4.2",
     "polkadot-api": "^2.1.6",
     "react": "^19.0.0",
@@ -37,6 +35,7 @@
     "vite": "^8.0.16"
   },
   "overrides": {
-    "@polkadot-api/json-rpc-provider": "0.2.0"
+    "@polkadot-api/json-rpc-provider": "0.2.0",
+    "ws": "^8.21.0"
   }
 }
