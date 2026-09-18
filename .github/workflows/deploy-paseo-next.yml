@@ -9,7 +9,8 @@ name: Deploy to devnet
 # push to main and on manual dispatch, and always targets the single production
 # domain `feedback.dot`.
 #
-# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.12.1 — it ships
+# Deploy CLI: @polkadot-community-foundation/polkadot-app-deploy@0.16.6 — it ships
+# the devnet DotNS v0.8.0 addresses (older CLIs bind names in abandoned sets),
 # the built-in `summit` env (RPCs + DotNS addresses + summit-ipfs gateway), the
 # manifest direct-signer fix, AND the Summit Publisher address
 # (0xf5fe0fc9f4c13dfd3a4a8abd27e64eb652157494) wired in, which `--publish` needs.
@@ -78,7 +79,7 @@ jobs:
           echo "OK: bundle targets the devnet Asset Hub"
 
       - name: Install deploy tool
-        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.12.1
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.16.6
 
       - name: Deploy to devnet Bulletin + bind feedback.dot
         uses: nick-fields/retry@v3
