@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import {
-    preimageManager,
+    getPreimageManager,
     requestPermission,
-} from "@novasamatech/host-api-wrapper";
+} from "@parity/product-sdk-host";
 import {
     SignerManager,
     HostProvider,
@@ -17,12 +17,91 @@ import {
     createContractRuntimeFromClient,
     ensureContractAccountMapped,
 } from "@parity/product-sdk-contracts";
-import { devnet_asset_hub } from "@polkadot-community-foundation/product-sdk-descriptors/devnet-asset-hub";
+import type { devnet_asset_hub } from "@parity/product-sdk-descriptors/devnet-asset-hub";
+import type { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import type { PolkadotClient, PolkadotSigner } from "polkadot-api";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { CID } from "multiformats/cid";
 import * as raw from "multiformats/codecs/raw";
 import type { MultihashDigest } from "multiformats/hashes/interface";
+
+/**
+ * Unwrap a product-sdk `Result` to its value, re-throwing the `err` channel as
+ * an `Error`. Since product-sdk 0.18 fallible calls return `Result` instead of
+ * throwing; this bridges them back onto throw / try-catch control flow. Mirrors
+ * the CLI's `unwrapResult` (playground-cli #470).
+ */
+export function unwrapResult<T>(
+    result: { ok: true; value: T } | { ok: false; error: unknown },
+): T {
+    if (!result.ok) {
+        throw result.error instanceof Error ? result.error : new Error(String(result.error));
+    }
+    return result.value;
+}
+
+// ---------------------------------------------------------------------------
+// Networks. "paseo-next" is the Paseo Next v2 preview network (para 1500) —
+// that's what the CDM `paseo` preset targets, NOT the public Paseo testnet.
+// "devnet" is the public products devnet on the Paseo testnet Asset Hub
+// (para 1000), with the community-operated CDM registry (reference:
+// contract-dependency-manager PR #61). Build with VITE_NETWORK=devnet to
+// select it; the default stays paseo-next. Descriptors load dynamically so
+// each build ships a single metadata chunk; chain identity comes from the
+// descriptor (host-routed chain client, no endpoints or genesis to pin).
+// ---------------------------------------------------------------------------
+
+type AssetHubDescriptor = typeof devnet_asset_hub | typeof paseo_asset_hub;
+
+interface NetworkConfig {
+    label: string;
+    /** IPFS gateways used to read Bulletin content, most specific first. */
+    gateways: readonly string[];
+    /** CDM ContractRegistry address the contract resolves against. */
+    registry: string;
+    loadDescriptor(): Promise<AssetHubDescriptor>;
+}
+
+// `import.meta.env.VITE_NETWORK` is inlined as a literal at build time, so this
+// comparison folds and the unselected network's ~880 kB metadata chunk is
+// dropped from the bundle. Keep it a direct literal comparison — routing the
+// choice through a lookup table or a normalizing helper leaves both import()s
+// reachable, so the build emits both metadata chunks.
+export const NETWORK: NetworkConfig =
+    import.meta.env.VITE_NETWORK === "devnet"
+        ? {
+              label: "Devnet (Paseo testnet)",
+              gateways: [
+                  "https://devnet-ipfs.api.polkadotcommunity.foundation/ipfs/",
+                  "https://ipfs.io/ipfs/",
+                  "https://dweb.link/ipfs/",
+                  "https://nftstorage.link/ipfs/",
+              ],
+              registry: "0x05662b3dbd5dd9f2ff92d67630477e84b0b37c1f",
+              loadDescriptor: async () =>
+                  (await import("@parity/product-sdk-descriptors/devnet-asset-hub")).devnet_asset_hub,
+          }
+        : {
+              label: "Paseo Next",
+              gateways: [
+                  "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs/",
+                  "https://dweb.link/ipfs/",
+                  "https://ipfs.io/ipfs/",
+                  "https://nftstorage.link/ipfs/",
+              ],
+              registry: "0xf62c2ece29cd8df2e10040ecfa5a894a5c5d9cb0",
+              loadDescriptor: async () =>
+                  (await import("@parity/product-sdk-descriptors/paseo-asset-hub")).paseo_asset_hub,
+          };
+
+// Dev only: a typo'd VITE_NETWORK silently falls back to paseo-next, so say so
+// while developing. Kept out of the selection above to preserve the fold.
+if (import.meta.env.DEV) {
+    const configured = import.meta.env.VITE_NETWORK;
+    if (configured && configured !== "devnet" && configured !== "paseo" && configured !== "paseo-next") {
+        console.warn(`[Network] Unknown VITE_NETWORK "${configured}", falling back to paseo-next`);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Permissions (RFC-0002)
@@ -34,11 +113,11 @@ async function ensurePermission(tag: "ChainSubmit" | "PreimageSubmit" | "Stateme
     if (_grantedPermissions.has(tag)) return;
     try {
         const result = await requestPermission({ tag, value: undefined });
-        if (result.isOk() && result.value) {
+        if (result.ok && result.value) {
             _grantedPermissions.add(tag);
             console.log(`[Permission] ${tag} granted`);
         } else {
-            console.warn(`[Permission] ${tag} denied`, result.isErr() ? result.error : "user rejected");
+            console.warn(`[Permission] ${tag} denied`, result.ok ? "user rejected" : result.error);
         }
     } catch (err) {
         console.warn(`[Permission] ${tag} request failed:`, err);
@@ -68,7 +147,7 @@ export function getAppAccountId(): [string, number] {
 /**
  * SignerManager wired to the Host API. The host derives an app-scoped product
  * account from `dotNsIdentifier`; HostProvider pins signing to
- * `createTransaction`, so pallet-revive's Summit signed extensions
+ * `createTransaction`, so pallet-revive's Paseo Next v2 signed extensions
  * (AsPgas, AsRingAlias, CheckWeight, WeightReclaim) are forwarded to the host
  * as opaque bytes rather than going through the PJS bridge that rejects unknown
  * extensions. It also requests the host's `ChainSubmit` permission on connect.
@@ -226,6 +305,10 @@ export async function uploadToBulletin(_account: AppAccount, bytes: Uint8Array):
     await ensurePermission("PreimageSubmit");
     const cid = calculateCID(bytes);
     console.log("[Bulletin] Submitting preimage via host, size:", bytes.length, "expected CID:", cid);
+    const preimageManager = await getPreimageManager();
+    if (!preimageManager) {
+        throw new Error("Preimage manager unavailable — open this app inside a Polkadot host.");
+    }
     await preimageManager.submit(bytes);
     console.log("[Bulletin] Preimage stored.");
     return cid;
@@ -328,14 +411,14 @@ async function ensureContractsReady(): Promise<void> {
         // `createChainClient` routes every connection through the host provider,
         // so the host never prompts "Allow Access to Web Domains" for a raw RPC
         // endpoint, and the chain identity comes from the descriptor — no
-        // hardcoded genesis. (product-sdk-chain-client dropped the formerly
-        // -unused `rpcs` field; the host owns endpoint selection.)
+        // hardcoded genesis.
+        const descriptor = await NETWORK.loadDescriptor();
         const chainClient = await createChainClient({
-            chains: { assetHub: devnet_asset_hub },
+            chains: { assetHub: descriptor },
         });
         const client = chainClient.raw.assetHub;
         _polkadotClient = client;
-        console.log("[CDM] Asset Hub chain client ready (host-routed)");
+        console.log(`[CDM] Asset Hub chain client ready (host-routed, ${NETWORK.label})`);
 
         console.log("[CDM] Waking Asset Hub chain follow...");
         await client.getChainSpecData();
@@ -354,23 +437,29 @@ async function ensureContractsReady(): Promise<void> {
         // and pallet-revive dry-run-fails that call with `Revive::AccountUnmapped`
         // when the query origin isn't mapped. Build a plain runtime (no registry
         // query) to perform the mapping first.
-        const initRuntime = createContractRuntimeFromClient(client, devnet_asset_hub);
+        const initRuntime = createContractRuntimeFromClient(client, descriptor);
         await mapAccountWithRuntime(initRuntime, _state.account);
 
         // `fromLiveClient` resolves the deployed contract address from the live
         // CDM registry on each init instead of trusting the snapshot baked into
         // cdm.json — a redeploy is picked up without shipping a new cdm.json.
-        _contractManager = await ContractManager.fromLiveClient(
+        // Since product-sdk 0.18, fromLiveClient returns a Result instead of
+        // throwing on resolution failure. The registry address comes from the
+        // selected network, so devnet resolves against the devnet registry.
+        const live = await ContractManager.fromLiveClient(
             _cdmJson,
             client,
-            devnet_asset_hub,
+            descriptor,
             {
                 defaultOrigin: _state.account.address as never,
                 defaultSigner: _state.account.signer,
+                registryAddress: NETWORK.registry as never,
                 registryOrigin: _state.account.address as never,
                 libraries: ["@polkadot/feedback"],
             },
         );
+        if (!live.ok) throw live.error;
+        _contractManager = live.value;
         _contract = wrapContract(_contractManager.getContract("@polkadot/feedback"));
         console.log("[CDM] Contract manager ready (live registry resolution)");
     })();
@@ -394,7 +483,12 @@ export function getContract(): any {
                         if (!_contract) throw new Error("Contract init failed");
                         const real = _contract[prop as string];
                         if (!real) throw new Error(`Unknown method: ${String(prop)}`);
-                        return real[methodProp](...args);
+                        // Since product-sdk 0.18, `.tx(...)` returns a Result
+                        // instead of throwing. Unwrap it (re-throw the `err`
+                        // channel) so call sites keep their try/catch flow.
+                        // `.query(...)` is unchanged upstream.
+                        const outcome = await real[methodProp](...args);
+                        return methodProp === "tx" ? unwrapResult(outcome) : outcome;
                     };
                 },
             });
@@ -415,7 +509,7 @@ export function asAddress(hexOrAccount: string | AppAccount): `0x${string}` {
 // ---------------------------------------------------------------------------
 // Account mapping (Revive).
 //
-// pallet-revive on Summit requires every SS58 origin that calls a
+// pallet-revive on Paseo Next v2 requires every SS58 origin that calls a
 // contract to have an explicit `Revive.map_account()` entry. Product accounts
 // are NOT pre-mapped by the host — the first contract call from a fresh product
 // account dry-run-fails with `Revive::AccountUnmapped` until we submit the
@@ -431,10 +525,12 @@ async function mapAccountWithRuntime(
 ): Promise<void> {
     if (_mappedAccounts.has(account.address)) return;
     try {
-        const mapped = await ensureContractAccountMapped(
-            runtime,
-            account.address as never,
-            account.signer,
+        // Since product-sdk 0.18, ensureContractAccountMapped returns a Result
+        // (ok(null) = already mapped) instead of throwing. Unwrap it so the
+        // catch handles both a returned `err` and any thrown failure with the
+        // same cause-chain logging.
+        const mapped = unwrapResult(
+            await ensureContractAccountMapped(runtime, account.address as never, account.signer),
         );
         if (mapped === null) {
             console.log(`[Revive] Account ${account.address} already mapped`);
@@ -444,9 +540,8 @@ async function mapAccountWithRuntime(
         _mappedAccounts.add(account.address);
     } catch (err) {
         console.error("[Revive] ensureContractAccountMapped failed:", err);
-        if (err && typeof err === "object" && "cause" in err) {
-            console.error("[Revive] underlying cause:", (err as any).cause);
-        }
+        const cause = err && typeof err === "object" ? (err as { cause?: unknown }).cause : undefined;
+        if (cause) console.error("[Revive] underlying cause:", cause);
         throw err;
     }
 }
@@ -462,12 +557,7 @@ export async function ensureMapping(account: AppAccount): Promise<void> {
 // Bulletin reads via public IPFS gateways (Promise.any race).
 // ---------------------------------------------------------------------------
 
-const GATEWAYS = [
-    "https://devnet-ipfs.api.polkadotcommunity.foundation/ipfs/",
-    "https://dweb.link/ipfs/",
-    "https://ipfs.io/ipfs/",
-    "https://nftstorage.link/ipfs/",
-] as const;
+const GATEWAYS = NETWORK.gateways;
 
 export const IPFS_GATEWAY = GATEWAYS[0];
 

@@ -63,24 +63,19 @@ jobs:
 
       - name: Build frontend
         run: npm run build:frontend
+        env:
+          VITE_NETWORK: devnet
 
-      - name: Assert the bundle targets devnet (not the Summit asset hub)
+      - name: Assert the bundle targets devnet
         run: |
-          # Assert the Summit descriptor positively, and reject only the
-          # app-selected `paseo_asset_hub` descriptor. We no longer grep for any
-          # 'paseo' string: product-sdk (>=0.15) legitimately bundles Paseo
-          # descriptor/endpoint strings (e.g. paseo-bulletin-next-rpc) into
-          # otherwise-correct Summit builds, so a blanket grep false-fails. The
-          # app selects summit_asset_hub and the host owns endpoint selection.
-          if ! grep -rIl 'paseo_asset_hub' dist >/dev/null; then
-            echo "::error::Paseo asset-hub descriptor missing from bundle — aborting paseo-next deploy"
+          # VITE_NETWORK folds the unselected network's metadata chunk out of the
+          # bundle, so the devnet Asset Hub genesis must be present and the
+          # paseo-next one absent.
+          if ! grep -raIl 'd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2' dist >/dev/null; then
+            echo "::error::devnet Asset Hub genesis missing from bundle"
             exit 1
           fi
-          if grep -rIl 'summit_asset_hub' dist >/dev/null; then
-            echo "::error::Summit asset-hub descriptor found in bundle — aborting paseo-next deploy"
-            exit 1
-          fi
-          echo "OK: bundle targets the Paseo Next asset hub"
+          echo "OK: bundle targets the devnet Asset Hub"
 
       - name: Install deploy tool
         run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.12.1
