@@ -19,7 +19,8 @@ import {
 } from "@parity/product-sdk-contracts";
 import type { devnet_asset_hub } from "@parity/product-sdk-descriptors/devnet-asset-hub";
 import type { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
-import type { PolkadotClient, PolkadotSigner } from "polkadot-api";
+import type { PolkadotClient } from "polkadot-api";
+import type { CommonSignerTxCreator } from "@polkadot-api/signers-common";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { CID } from "multiformats/cid";
 import * as raw from "multiformats/codecs/raw";
@@ -171,12 +172,12 @@ export interface AppAccount {
     publicKey: Uint8Array;
     /** Display name (optional). */
     name: string | null;
-    /** PolkadotSigner ready for `tx.signSubmitAndWatch`. */
-    signer: PolkadotSigner;
+    /** PAPI 3 tx creator the SDK signs contract and mapping txs with. */
+    signer: CommonSignerTxCreator;
     /** [identifier, derivationIndex] used by host-mediated APIs. */
     productAccountId: [string, number];
     /** Backwards-compat: components call account.getSigner(). */
-    getSigner(): PolkadotSigner;
+    getSigner(): CommonSignerTxCreator;
 }
 
 /** Adapt a SignerAccount from the SDK to the app's AppAccount shape. */
